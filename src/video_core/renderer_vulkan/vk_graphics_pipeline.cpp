@@ -16,6 +16,7 @@
 
 #include "video_core/renderer_vulkan/pipeline_build_trace.h"
 #include "video_core/renderer_vulkan/pipeline_helper.h"
+#include "video_core/renderer_vulkan/pipeline_optimization.h"
 
 #include "common/bit_field.h"
 #include "common/scope_exit.h"
@@ -1265,6 +1266,12 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         flags |= VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
 
+    // LOCAL TEST ONLY: graphics stages go through BuildsUnoptimized too (from #210).
+    if (std::ranges::any_of(key.unique_hashes, [this](u64 hash) {
+            return hash != 0 && BuildsUnoptimized(device.GetDriverID(), hash);
+        })) {
+        flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+    }
     const bool unoptimized = (flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT) != 0;
     const auto trace_begin = std::chrono::steady_clock::now();
     TracePipelineBuild("BEGIN", "graphics", key.Hash(), key.unique_hashes, unoptimized);
