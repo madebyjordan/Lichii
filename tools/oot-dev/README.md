@@ -21,3 +21,17 @@ Test-only code these rely on is in the `LOCAL TEST ONLY` commit on this branch.
 - `EDEN_NX2_ASYNC_DISCARD=1` with async shaders: time spent with draws held for unbuilt pipelines falls from ~86 s to under 0.5 s per session.
 - Building tessellation shader `da3613e0fed1f0be` unoptimized didn't help: its pipelines took −15%, total driver time was unchanged (+4%), and fps was the same.
 - The remaining ~2 s freezes aren't GPU-thread pipeline builds. The next suspect is the `IStorage::Read` throttle (#278).
+
+## Performance findings (2026-11-06, Castle Town / Hyrule Castle / Hyrule Field route, ~5 min per run)
+
+These come from the `perf/run-profile.bat` frame trace, GPU profile and IPC counts.
+
+- Average fps is ~28. The median frame is ~40 ms: the GPU is busy ~26 ms and idle ~14 ms between ~35 submissions.
+- No CPU thread is saturated. The busiest guest core uses ~630 ms/s, and the emulator ~4 of 12 host threads.
+- The GPU front thread waits for the back ~400–560 ms/s, and the back waits for the front ~340–380 ms/s. This mutual waiting is what leaves the GPU idle.
+- The largest single GPU item is the gameplay upscaler `6bd913e1f34e83eb` (software HMMA), ~2.3 ms per run.
+- Rejected:
+  - the IStorage read throttle (#278 off: same fps and the same share of frames over 100 ms)
+  - ASTC decoding (0 ms waiting; the "in X ms" figure is the report window, not decode time)
+  - #174, HMMA unroll (upscaler 2.29 → 2.29 ms on RDNA2; reverted on this branch)
+  - #345, precise split-front reads: front sync waits fell from 416 to 247 ms/s, but writer waits rose from 148 to 279 ms/s, so fps didn't change. It also needed a shadowing rename to build on MSVC.
