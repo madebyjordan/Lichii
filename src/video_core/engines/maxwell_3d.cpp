@@ -1047,9 +1047,8 @@ struct Maxwell3D::FrontState {
     bool upload_tracked{};
     GPUVAddr upload_begin{};
     GPUVAddr upload_end{};
-    /// Device pages that report_semaphore writes went to; past 4096 of them, every read flushes.
-    std::unordered_set<DAddr> report_pages;
-    bool report_pages_full{};
+    /// Pages that report_semaphore writes went to.
+    std::unordered_set<GPUVAddr> report_pages;
 };
 
 namespace {
@@ -1276,13 +1275,9 @@ void Maxwell3D::FrontNoteWrites(VideoCommon::GpuSplit& split, FrontState& fs, u3
         const GPUVAddr begin = address(MAXWELL3D_REG_INDEX(report_semaphore.address_high),
                                        MAXWELL3D_REG_INDEX(report_semaphore.address_low));
         note(begin, begin + 16);
-        for (const GPUVAddr page : {begin, begin + 15}) {
-            const auto device = memory_manager.GpuToCpuAddress(page);
-            if (!device || fs.report_pages.size() >= 4096) {
-                fs.report_pages_full = true;
-                break;
-            }
-            fs.report_pages.insert(*device >> 12);
+        if (fs.report_pages.size() < 4096) {
+            fs.report_pages.insert(begin >> 12);
+            fs.report_pages.insert((begin + 15) >> 12);
         }
     }
 }
@@ -1521,33 +1516,6 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
     } else {
         split.Drain(VideoCommon::DrainSite::MacroDmaRead);
     }
-    // GPU-written words may still be only in a host buffer: the back checks and downloads them.
-    if (precise && shadow_words.empty() && words != 0) {
-        bool gpu_written = false;
-        for (GPUVAddr page = source & ~GPUVAddr{0xfff}; page < source + read_bytes && !gpu_written;
-             page += 0x1000) {
-            const auto device = memory_manager.GpuToCpuAddress(page);
-            gpu_written = device && Tegra::Nx2IsGpuWritten(*device);
-        }
-        if (gpu_written) {
-            if (static const bool stats = std::getenv("EDEN_NX2_MME_DMA_STATS") != nullptr; stats) {
-                static u64 checks{};
-                if ((++checks & 0x3ff) == 0) {
-                    LOG_INFO(HW_GPU, "MME DMA reads of GPU-written pages checked on the back: {}",
-                             checks);
-                }
-            }
-            split.Run(
-                [memory = &memory_manager, source, read_bytes] {
-                    if (memory->IsMemoryDirty(source, read_bytes,
-                                              VideoCommon::CacheType::BufferCache)) {
-                        memory->FlushRegion(source, read_bytes,
-                                            VideoCommon::CacheType::BufferCache);
-                    }
-                },
-                VideoCommon::DrainSite::MacroDmaFlush);
-        }
-    }
     if (!precise && VideoCommon::QueryDma::TraceEnabled()) {
         split.Run(
             [this, macro, method, source, read_bytes] {
@@ -1582,12 +1550,8 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
         if (!shadow_words.empty() || words == 0) {
             return false;
         }
-        if (fs.report_pages_full) {
-            return true;
-        }
         for (GPUVAddr page = source >> 12; page <= (source + read_bytes - 1) >> 12; ++page) {
-            const auto device = memory_manager.GpuToCpuAddress(page << 12);
-            if (device && fs.report_pages.contains(*device >> 12)) {
+            if (fs.report_pages.contains(page)) {
                 return true;
             }
         }
