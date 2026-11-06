@@ -20,7 +20,7 @@ Test-only code these rely on is in the `LOCAL TEST ONLY` commit on this branch.
 - zortos293/Lichii#313: the eviction budget is verified in normal play and with a forced budget. Evicting recently used pipelines lost the device, hence the 9000-frame floor.
 - `EDEN_NX2_ASYNC_DISCARD=1` with async shaders: time spent with draws held for unbuilt pipelines falls from ~86 s to under 0.5 s per session.
 - Building tessellation shader `da3613e0fed1f0be` unoptimized didn't help: its pipelines took −15%, total driver time was unchanged (+4%), and fps was the same.
-- The remaining ~2 s freezes aren't GPU-thread pipeline builds. The next suspect is the `IStorage::Read` throttle (#278).
+- The remaining ~2 s freezes aren't GPU-thread pipeline builds, and they aren't the `IStorage::Read` throttle either (see below).
 
 ## Performance findings (2026-11-06, Castle Town / Hyrule Castle / Hyrule Field route, ~5 min per run)
 
