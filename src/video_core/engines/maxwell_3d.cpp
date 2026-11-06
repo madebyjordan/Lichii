@@ -1225,12 +1225,7 @@ void Maxwell3D::FrontNoteWrites(VideoCommon::GpuSplit& split, FrontState& fs, u3
             return;
         }
         const GPUVAddr begin = base + offset_end - bytes;
-        // In Replay the back writes the shadow RAM values, not these words: reads wait for it.
-        const bool replay = fs.control == Regs::ShadowRamControl::Replay;
-        split.NoteMemoryWrite(&memory_manager, begin, base + offset_end, replay);
-        if (replay) {
-            return;
-        }
+        split.NoteMemoryWrite(&memory_manager, begin, base + offset_end, false);
         // The words themselves, for MME DMA reads of them while the back has not written them.
         if (fs.cb_shadow.size() >= 16384) {
             const u64 done = split.Consumed();
