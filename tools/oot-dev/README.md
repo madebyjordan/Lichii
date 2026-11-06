@@ -35,3 +35,6 @@ These come from the `perf/run-profile.bat` frame trace, GPU profile and IPC coun
   - ASTC decoding (0 ms waiting; the "in X ms" figure is the report window, not decode time)
   - #174, HMMA unroll (upscaler 2.29 → 2.29 ms on RDNA2; reverted on this branch)
   - #345, precise split-front reads: front sync waits fell from 416 to 247 ms/s, but writer waits rose from 148 to 279 ms/s, so fps didn't change. It also needed a shadowing rename to build on MSVC.
+- Macro `0xe2c` reads query-report pages ~8,000 times a second, and only 540 of 2.08 million of those reads hit a pending result in the exact words. The page marks are sticky and page-granular.
+- #243 (per-slot report tracking, fork branch `oot/perf-243`): macro DMA waits fall from 185 to 38 ms/s, but acquire and list-writer waits rise, so total front waits stay ~534 ms/s. fps 29.3 (within noise), and green foliage flashes return. Kept #345 on oot/dev because it removes the flashes.
+- Conclusion: wait-site fixes move the waiting instead of removing it. The host GPU needs ~25–27 ms per frame, so this RX 6700 XT tops out around ~38 fps at best. More fps would need cheaper back-thread draw setup.
