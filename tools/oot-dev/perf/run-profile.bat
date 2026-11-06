@@ -8,8 +8,5 @@ set "EDEN_NX2_ASYNC_DISCARD=1"
 set "EDEN_NX2_IPC_SUMMARY=1"
 set "EDEN_NX2_GPU_PROFILE=1"
 set "EDEN_DKB_FRAME_TRACE=1"
-rem Why the front's macro DMA reads wait for the back (MME_DMA_CAUSES is local test only).
-set "EDEN_NX2_MME_DMA_STATS=1"
-set "EDEN_NX2_MME_DMA_CAUSES=1"
 if exist "%EDEN_NX2_PIPELINE_BUILD_TRACE%" move /y "%EDEN_NX2_PIPELINE_BUILD_TRACE%" "%BIN%\pipeline-build-trace.old.txt" >nul
 start "" "%BIN%\lichii.exe"

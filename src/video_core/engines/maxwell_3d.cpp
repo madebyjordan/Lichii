@@ -8,8 +8,6 @@
 #include <array>
 #include <atomic>
 #include <cstring>
-#include <vector>
-#include <chrono>
 #include <limits>
 #include <optional>
 #include <string>
@@ -1619,62 +1617,6 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
         }
         return false;
     }();
-    // LOCAL TEST ONLY: EDEN_NX2_MME_DMA_CAUSES=1 logs every 5 s why the front's macro DMA reads
-    // needed the back: GPU-written pages (flushed on the back), query report pages, or neither.
-    if (static const bool causes_on = std::getenv("EDEN_NX2_MME_DMA_CAUSES") != nullptr;
-        causes_on) {
-        static u64 total{}, written{}, reports{}, both{}, from_copy{}, imprecise{}, bytes{};
-        static std::unordered_map<u32, u64> written_by_macro, reports_by_macro;
-        static auto last = std::chrono::steady_clock::now();
-        bool page_written = false;
-        for (GPUVAddr page = source & ~GPUVAddr{0xfff}; page < source + read_bytes && !page_written;
-             page += 0x1000) {
-            const auto device = memory_manager.GpuToCpuAddress(page);
-            page_written = device && Tegra::Nx2IsGpuWritten(*device);
-        }
-        ++total;
-        bytes += read_bytes;
-        from_copy += !shadow_words.empty() ? 1 : 0;
-        imprecise += !precise ? 1 : 0;
-        if (page_written && reads_reports) {
-            ++both;
-        } else if (page_written) {
-            ++written;
-        } else if (reads_reports) {
-            ++reports;
-        }
-        if (page_written) {
-            ++written_by_macro[macro];
-        }
-        if (reads_reports) {
-            ++reports_by_macro[macro];
-        }
-        const auto now = std::chrono::steady_clock::now();
-        if (now - last >= std::chrono::seconds{5}) {
-            const auto top = [](const std::unordered_map<u32, u64>& counts) {
-                std::vector<std::pair<u64, u32>> sorted;
-                for (const auto& [key, count] : counts) {
-                    sorted.emplace_back(count, key);
-                }
-                std::sort(sorted.rbegin(), sorted.rend());
-                std::string text;
-                for (size_t i = 0; i < std::min<size_t>(5, sorted.size()); ++i) {
-                    text += fmt::format(" {:#x}:{}", sorted[i].second, sorted[i].first);
-                }
-                return text;
-            };
-            LOG_INFO(HW_GPU,
-                     "MME DMA read causes (5 s): {} reads ({} KiB), GPU-written {}, reports {}, "
-                     "both {}, answered from front copy {}, imprecise {} | GPU-written by macro{} "
-                     "| reports by macro{}",
-                     total, bytes / 1024, written, reports, both, from_copy, imprecise,
-                     top(written_by_macro), top(reports_by_macro));
-            total = written = reports = both = from_copy = imprecise = bytes = 0;
-            written_by_macro.clear();
-            reports_by_macro.clear();
-            last = now;
-        }
-    }
     if (reads_reports) {
         split.Run(
             [this, source, read_bytes] {
