@@ -444,10 +444,8 @@ public:
     Common::SpinRecursiveMutex mutex;
     Runtime& runtime;
     bool any_buffer_uploaded = false;
-    /// The guest words of each page of native programs' indirectly read banks when last checked:
-    /// unchanged pages keep their tracking (marking them CPU-modified costs two mprotect calls
-    /// per page).
-    std::unordered_map<DAddr, std::array<u8, Core::DEVICE_PAGESIZE>> native_indirect_page_snapshots;
+    /// Indirectly read banks of native programs already uploaded this frame.
+    std::unordered_set<DAddr> native_indirect_uniforms_this_frame;
 
 private:
     template <typename Func>
