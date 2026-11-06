@@ -1678,6 +1678,24 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
     if (reads_reports) {
         split.Run(
             [this, source, read_bytes] {
+                // LOCAL TEST ONLY (EDEN_NX2_MME_DMA_CAUSES): did the exact words have a pending
+                // query result, or did the read only share a page with reports?
+                if (static const bool causes_on = std::getenv("EDEN_NX2_MME_DMA_CAUSES") != nullptr;
+                    causes_on) {
+                    static u64 flushes{}, pending{};
+                    ++flushes;
+                    pending += VideoCommon::QueryDma::HasPendingQueries(memory_manager, *rasterizer,
+                                                                        source, read_bytes)
+                                   ? 1
+                                   : 0;
+                    if ((flushes & 0x3fff) == 0) {
+                        LOG_INFO(HW_GPU,
+                                 "MME DMA report-page flushes: {} of the last 16384 had a pending "
+                                 "query result in the words read (sample read {:#x}, {} bytes)",
+                                 pending, source, read_bytes);
+                        pending = 0;
+                    }
+                }
                 VideoCommon::QueryDma::FlushPending(memory_manager, *rasterizer, source, read_bytes);
             },
             VideoCommon::DrainSite::MacroDmaFlush);
