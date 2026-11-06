@@ -731,11 +731,20 @@ bool PreloadAllPipelines() {
 // Graphics pipelines a Switch 2 title keeps before any is evicted: an eighth of system RAM at
 // ~0.45 MB of driver memory each (16 GB: ~4,600), and never fewer than the boot limit above.
 size_t Switch2PipelineBudget() {
+    // LOCAL TEST ONLY, not for the PR: force a small budget to exercise eviction.
+    if (const char* forced = std::getenv("EDEN_NX2_TEST_PIPELINE_BUDGET")) {
+        return static_cast<size_t>(std::strtoull(forced, nullptr, 10));
+    }
     static const size_t budget = std::max<size_t>(
         MaxPipelinesWithoutUsedList, Common::GetMemInfo().TotalPhysicalMemory / 8 / (450 * 1024));
     return budget;
 }
 } // Anonymous namespace
+
+// LOCAL TEST ONLY: where a slow GPU-thread graphics pipeline build spends its time.
+thread_local struct {
+    std::chrono::steady_clock::time_point inner_begin, translated, prepared;
+} g_build_phase;
 
 PipelineCache::~PipelineCache() {
     background_pipelines.Stop();
@@ -1286,6 +1295,8 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
     std::span<Shader::Environment* const> envs, PipelineStatistics* statistics,
     bool build_in_parallel, std::shared_ptr<ShaderPools> emit_pools,
     std::unique_ptr<EmissionBudget::Reservation> reservation) try {
+    g_build_phase = {};
+    g_build_phase.inner_begin = std::chrono::steady_clock::now();
     auto hash = key.Hash();
     LOG_DEBUG(Render_Vulkan, "{:#016x}", hash);
     size_t env_index{0};
@@ -1353,6 +1364,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
             layer_source_program = &programs[index];
         }
     }
+    g_build_phase.translated = std::chrono::steady_clock::now();
     // A tessellation pipeline the driver would refuse is skipped like a missing mesh pipeline:
     // the draw is dropped (see the pipeline check in the rasterizer) instead of failing the build.
     {
@@ -1465,6 +1477,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         };
     }
     Common::ThreadWorker* const thread_worker{build_in_parallel ? &workers : nullptr};
+    g_build_phase.prepared = std::chrono::steady_clock::now();
     return std::make_unique<GraphicsPipeline>(
         scheduler, buffer_cache, texture_cache, vulkan_pipeline_cache, &shader_notify, device,
         descriptor_pool, guest_descriptor_queue, descriptor_buffer_ring, thread_worker, statistics,
@@ -1535,7 +1548,25 @@ void ReportRuntimePipeline(const char* kind, std::chrono::steady_clock::time_poi
 
 std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline() {
     const auto begin = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point envs_done{}, inner_done{};
     SCOPE_EXIT {
+        const auto end = std::chrono::steady_clock::now();
+        if (end - begin > std::chrono::milliseconds{250}) {
+            const auto ms = [](auto a, auto b) {
+                return a.time_since_epoch().count() == 0 || b.time_since_epoch().count() == 0
+                           ? -1.0
+                           : std::chrono::duration<double, std::milli>(b - a).count();
+            };
+            const auto& ph = g_build_phase;
+            LOG_WARNING(Render_Vulkan,
+                        "Slow GPU-thread pipeline {:016x}: {:.1f} ms = environments {:.1f}, "
+                        "pools/budget {:.1f}, translate {:.1f}, prepare {:.1f}, construct {:.1f}, "
+                        "after (serialize/flush) {:.1f}",
+                        graphics_key.Hash(), ms(begin, end), ms(begin, envs_done),
+                        ms(envs_done, ph.inner_begin), ms(ph.inner_begin, ph.translated),
+                        ms(ph.translated, ph.prepared), ms(ph.prepared, inner_done),
+                        ms(inner_done, end));
+        }
         std::string shaders = fmt::format("pipeline={:016x}", graphics_key.Hash());
         for (size_t stage = 0; stage < graphics_key.unique_hashes.size(); ++stage) {
             if (graphics_key.unique_hashes[stage] != 0) {
@@ -1546,6 +1577,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline() {
     };
     GraphicsEnvironments environments;
     GetGraphicsEnvironments(environments, graphics_key.unique_hashes);
+    envs_done = std::chrono::steady_clock::now();
 
     std::shared_ptr<ShaderPools> emit_pools;
     auto reservation = emission_budget.TryAcquire(maxwell3d->GetNativeMacroEngine().native_turing);
@@ -1566,6 +1598,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline() {
     ShaderPools& pools = emit_pools ? *emit_pools : main_pools;
     auto pipeline{CreateGraphicsPipeline(pools, graphics_key, environments.Span(), nullptr, true,
                                          std::move(emit_pools), std::move(reservation))};
+    inner_done = std::chrono::steady_clock::now();
     if (!pipeline || pipeline_cache_filename.empty()) {
         return pipeline;
     }
