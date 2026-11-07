@@ -802,11 +802,10 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
         current_pipeline = nullptr;
         return nullptr;
     }
-    graphics_key.state.Refresh(*maxwell3d, dynamic_features);
     if (dynamic_features.has_dynamic_vertex_input) {
         graphics_key.state.attribute_types = vertex_attribute_types;
     }
-
+    graphics_key.state.Refresh(*maxwell3d, dynamic_features);
     if (dynamic_features.has_dynamic_vertex_input) {
         // Refresh only rewrites the types when the vertex input changes, so the masked copy in the
         // key must not carry over to the next program. Types of attributes the program doesn't
