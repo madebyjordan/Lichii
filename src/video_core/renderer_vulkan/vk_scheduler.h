@@ -465,7 +465,12 @@ private:
         u32 num_shaders{};
         u32 untracked_uses{};
         std::array<ShaderUse, 32> shaders{};
+        const char* site_file{}; ///< Where the submission was flushed (gap attribution)
+        u32 site_line{};
+        bool site_finish{};
     };
+    std::source_location submit_site{};
+    bool submit_is_finish{};
     SubmissionTrace trace_work;
     std::vector<SubmissionTrace> trace_submissions;
     static constexpr u32 TraceMaxWork = 4096;
