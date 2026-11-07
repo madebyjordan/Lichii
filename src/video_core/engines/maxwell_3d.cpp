@@ -1675,7 +1675,41 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
             last = now;
         }
     }
-    if (reads_reports) {
+    // A report page read waits for the back only while a report in the exact words is still
+    // waiting for its host result (per-slot counts from #243). The precise read above already
+    // waited for queued report writes to those words, so every such report is issued by now.
+    // Ocarina's macro 0xe2c reads report pages ~8,000 times a second, and almost none of those
+    // reads overlap a pending result. EDEN_NX2_REPORT_SLOTS=0 always flushes (A/B).
+    const bool reports_settled = [&] {
+        static const bool slots_on = [] {
+            const char* value = std::getenv("EDEN_NX2_REPORT_SLOTS");
+            return value == nullptr || value[0] != '0';
+        }();
+        if (!reads_reports || !precise || !slots_on) {
+            return false;
+        }
+        for (GPUVAddr begin = source; begin < source + read_bytes;) {
+            const GPUVAddr page_end = std::min<GPUVAddr>((begin & ~GPUVAddr{0xfff}) + 0x1000,
+                                                         source + read_bytes);
+            const auto device = memory_manager.GpuToCpuAddress(begin);
+            if (!device || !Tegra::Nx2AsyncReportsSettled(*device, page_end - begin)) {
+                return false;
+            }
+            begin = page_end;
+        }
+        return true;
+    }();
+    if (static const bool causes_on = std::getenv("EDEN_NX2_MME_DMA_CAUSES") != nullptr;
+        causes_on && reads_reports) {
+        static u64 skipped{}, flushed{};
+        ++(reports_settled ? skipped : flushed);
+        if (((skipped + flushed) & 0x3fff) == 0) {
+            LOG_INFO(HW_GPU, "Report page reads: {} skipped the flush (settled), {} flushed",
+                     skipped, flushed);
+            skipped = flushed = 0;
+        }
+    }
+    if (reads_reports && !reports_settled) {
         split.Run(
             [this, source, read_bytes] {
                 // LOCAL TEST ONLY (EDEN_NX2_MME_DMA_CAUSES): did the exact words have a pending
