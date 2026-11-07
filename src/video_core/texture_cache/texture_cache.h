@@ -180,6 +180,23 @@ void TextureCache<P>::RunGarbageCollector() {
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, image_id);
         }
+        if (tc_log) {
+            const auto& info = image.info;
+            const u64 key = (u64{static_cast<u32>(info.format)} << 56) |
+                            (u64{static_cast<u32>(info.type)} << 52) |
+                            (u64{static_cast<u32>(info.resources.levels) & 0xF} << 48) |
+                            (u64{static_cast<u32>(info.resources.layers) & 0xFFF} << 36) |
+                            (u64{info.size.width & 0x3FFFF} << 18) | (info.size.height & 0x3FFFF);
+            if (tc_collected.size() > 1'000'000) {
+                tc_collected.clear();
+            }
+            tc_collected[image.gpu_addr] = {key, frame_tick};
+            const u64 life = frame_tick - image.allocation_tick;
+            ++tc_collected_life[life <= 30 ? 0 : life <= 120 ? 1 : life <= 600 ? 2 : 3];
+            if (True(image.flags & ImageFlagBits::GpuModified)) {
+                ++tc_collected_gpu_written;
+            }
+        }
         ++(True(image.flags & ImageFlagBits::CostlyLoad) ? gc_costly_deletes : gc_deletes);
         UnregisterImage(image_id);
         DeleteImage(image_id, image.scale_tick > frame_tick + 5);
@@ -437,14 +454,28 @@ void TextureCache<P>::TickFrame() {
                  async_decodes_queued, astc_opaque_images, astc_alpha_images);
         LOG_INFO(HW_GPU, "Texture cache last 600 frames: {} uploads from guest memory, {} MiB (largest {} MiB, {} by layer)",
                  images_uploaded, uploaded_bytes >> 20, largest_upload >> 20, layer_uploads);
+        LOG_INFO(HW_GPU,
+                 "Texture cache last 600 frames: created at an address the collector freed: {} same "
+                 "shape ({} frames later on average), {} other shape | at an address used before: "
+                 "{} same shape, {} other shape | new address: {} | uploads in the creating frame: {} "
+                 "| collected after <=30/<=120/<=600/more frames: {}/{}/{}/{}, {} GPU-written",
+                 tc_recreated_same,
+                 tc_recreated_same != 0 ? tc_recreated_same_frames / tc_recreated_same : 0,
+                 tc_recreated_other, tc_seen_same, tc_seen_other, tc_new_address,
+                 tc_uploads_at_create, tc_collected_life[0], tc_collected_life[1],
+                 tc_collected_life[2], tc_collected_life[3], tc_collected_gpu_written);
+        tc_recreated_same = tc_recreated_same_frames = tc_recreated_other = 0;
+        tc_seen_same = tc_seen_other = tc_new_address = tc_uploads_at_create = 0;
+        tc_collected_life = {};
+        tc_collected_gpu_written = 0;
         images_uploaded = uploaded_bytes = largest_upload = layer_uploads = 0;
         astc_opaque_images = astc_alpha_images = 0;
         std::vector<std::pair<u32, u64>> shapes;
         for (const auto& [key, value] : created_shapes) shapes.emplace_back(value.first, key);
         std::sort(shapes.rbegin(), shapes.rend());
-        for (size_t i = 0; i < std::min<size_t>(10, shapes.size()); ++i) {
+        for (size_t i = 0; i < std::min<size_t>(12, shapes.size()); ++i) {
             const u64 key = shapes[i].second;
-            LOG_DEBUG(HW_GPU, "  created {}x: format {} type {} levels {} layers {} {}x{} (last at {:#x})",
+            LOG_INFO(HW_GPU, "  created {}x: format {} type {} levels {} layers {} {}x{} (last at {:#x})",
                      shapes[i].first, key >> 56, (key >> 52) & 0xF, (key >> 48) & 0xF,
                      (key >> 36) & 0xFFF, (key >> 18) & 0x3FFFF, key & 0x3FFFF,
                      created_shapes[key].second);
@@ -1786,6 +1817,9 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
     ++images_uploaded;
     uploaded_bytes += image.guest_size_bytes;
     largest_upload = (std::max<u64>)(largest_upload, image.guest_size_bytes);
+    if (tc_log && image.allocation_tick == frame_tick) {
+        ++tc_uploads_at_create;
+    }
     if (!UploadInChunks(image)) {
         auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
         UploadImageContents(image, staging);
@@ -2693,10 +2727,29 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
                         (u64{static_cast<u32>(new_info.resources.levels) & 0xF} << 48) |
                         (u64{static_cast<u32>(new_info.resources.layers) & 0xFFF} << 36) |
                         (u64{new_info.size.width & 0x3FFFF} << 18) | (new_info.size.height & 0x3FFFF);
-        if (debug_stats) {
+        if (debug_stats || tc_log) {
             auto& shape = created_shapes[key];
             ++shape.first;
             shape.second = gpu_addr;
+        }
+        if (tc_log) {
+            if (const auto it = tc_collected.find(gpu_addr); it != tc_collected.end()) {
+                if (it->second.first == key) {
+                    ++tc_recreated_same;
+                    tc_recreated_same_frames += frame_tick - it->second.second;
+                } else {
+                    ++tc_recreated_other;
+                }
+                tc_collected.erase(it);
+            } else if (const auto seen = tc_created.find(gpu_addr); seen != tc_created.end()) {
+                ++(seen->second == key ? tc_seen_same : tc_seen_other);
+            } else {
+                ++tc_new_address;
+            }
+            if (tc_created.size() > 1'000'000) {
+                tc_created.clear();
+            }
+            tc_created[gpu_addr] = key;
         }
         ++images_created;
     }
