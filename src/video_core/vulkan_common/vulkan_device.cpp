@@ -30,6 +30,7 @@
 #include "video_core/vulkan_common/nsight_aftermath_tracker.h"
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/vulkan_common/vulkan_device.h"
+#include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/gpu_logging/gpu_logging.h"
 #ifdef EGLANTINE_STREAMLINE
@@ -812,7 +813,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
             // block (8 MiB) their own memory, which goes back to the driver when they are freed.
             .preferredLargeHeapBlockSize = 16u * 1024u * 1024u,
             .pAllocationCallbacks = nullptr,
-            .pDeviceMemoryCallbacks = nullptr,
+            .pDeviceMemoryCallbacks = VramTraceCallbacks(), // LOCAL TEST ONLY: EDEN_NX2_VRAM_TRACE
             .pHeapSizeLimit = heap_size_limit != 0 ? heap_size_limits.data() : nullptr,
             .pVulkanFunctions = &functions,
             .instance = instance,

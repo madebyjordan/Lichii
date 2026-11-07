@@ -5,10 +5,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <mutex>
 #include <array>
 #include <bit>
 #include <limits>
 #include <optional>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -18,6 +22,7 @@
 #include "common/common_types.h"
 #include "common/literals.h"
 #include "common/logging.h"
+#include <fmt/format.h>
 #include <ranges>
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -27,6 +32,90 @@
 #include "common/settings.h"
 
 namespace Vulkan {
+
+// LOCAL TEST ONLY: EDEN_NX2_VRAM_TRACE=1.
+namespace {
+struct VramTrace {
+    std::mutex mutex;
+    std::array<s64, VK_MAX_MEMORY_TYPES> total{};
+    s64 second = -1;
+    u64 added{}, freed{}, largest{};
+    u32 allocations{}, frees{};
+    std::atomic<u64> burst_bytes{};
+    std::atomic<s64> burst_second{-1};
+};
+VramTrace& Trace() {
+    static VramTrace trace;
+    return trace;
+}
+s64 NowSecond() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+void FlushSecond(VramTrace& t, s64 now) {
+    if (t.second != now) {
+        if (t.added != 0 || t.freed != 0) {
+            std::string totals;
+            for (size_t type = 0; type < t.total.size(); ++type) {
+                if (t.total[type] != 0) {
+                    totals += fmt::format(" type{}={}MiB", type, t.total[type] >> 20);
+                }
+            }
+            LOG_INFO(Render_Vulkan,
+                     "VRAMTRACE +{} MiB in {} allocations (largest {} MiB), -{} MiB in {} frees;{}",
+                     t.added >> 20, t.allocations, t.largest >> 20, t.freed >> 20, t.frees, totals);
+        }
+        t.second = now;
+        t.added = t.freed = t.largest = 0;
+        t.allocations = t.frees = 0;
+    }
+}
+void VKAPI_PTR OnAllocate(VmaAllocator, uint32_t type, VkDeviceMemory, VkDeviceSize size, void*) {
+    VramTrace& t = Trace();
+    const s64 now = NowSecond();
+    std::scoped_lock lock{t.mutex};
+    FlushSecond(t, now);
+    t.total[type] += static_cast<s64>(size);
+    t.added += size;
+    t.largest = (std::max)(t.largest, static_cast<u64>(size));
+    ++t.allocations;
+    if (t.burst_second.exchange(now) != now) {
+        t.burst_bytes = 0;
+    }
+    t.burst_bytes += size;
+}
+void VKAPI_PTR OnFree(VmaAllocator, uint32_t type, VkDeviceMemory, VkDeviceSize size, void*) {
+    VramTrace& t = Trace();
+    const s64 now = NowSecond();
+    std::scoped_lock lock{t.mutex};
+    FlushSecond(t, now);
+    t.total[type] -= static_cast<s64>(size);
+    t.freed += size;
+    ++t.frees;
+}
+bool VramTraceEnabled() {
+    static const bool enabled = std::getenv("EDEN_NX2_VRAM_TRACE") != nullptr;
+    return enabled;
+}
+} // Anonymous namespace
+
+const VmaDeviceMemoryCallbacks* VramTraceCallbacks() {
+    static const VmaDeviceMemoryCallbacks callbacks{
+        .pfnAllocate = OnAllocate,
+        .pfnFree = OnFree,
+        .pUserData = nullptr,
+    };
+    return VramTraceEnabled() ? &callbacks : nullptr;
+}
+
+bool VramTraceBurst() {
+    if (!VramTraceEnabled()) {
+        return false;
+    }
+    VramTrace& t = Trace();
+    return t.burst_second.load() == NowSecond() && t.burst_bytes.load() > (u64{256} << 20);
+}
 namespace {
 
 // Helpers translating MemoryUsage to flags/usage
@@ -300,6 +389,11 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
         );
     }
 
+    if (VramTraceBurst() && alloc_info.size >= (u64{4} << 20)) {
+        LOG_INFO(Render_Vulkan, "VRAMTRACE image {}x{}x{} ({} levels, {} layers, format {}): {} MiB",
+                 ci.extent.width, ci.extent.height, ci.extent.depth, ci.mipLevels, ci.arrayLayers,
+                 static_cast<u32>(ci.format), alloc_info.size >> 20);
+    }
     return vk::Image(handle, ci.usage, *device.GetLogical(), allocator, allocation,
                         device.GetDispatchLoader());
 }
@@ -438,6 +532,10 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
         );
     }
 
+    if (VramTraceBurst() && alloc_info.size >= (u64{4} << 20)) {
+        LOG_INFO(Render_Vulkan, "VRAMTRACE buffer {} MiB (usage {:#x}, memory type {})",
+                 alloc_info.size >> 20, static_cast<u32>(ci.usage), alloc_info.memoryType);
+    }
     u8 *data = reinterpret_cast<u8 *>(alloc_info.pMappedData);
     const std::span<u8> mapped_data = data ? std::span<u8>{data, ci.size} : std::span<u8>{};
     const bool is_coherent = (property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
@@ -485,6 +583,10 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
                                            &allocation, &alloc_info));
     vmaGetAllocationMemoryProperties(allocator, allocation, &property_flags);
 
+    if (VramTraceBurst() && alloc_info.size >= (u64{4} << 20)) {
+        LOG_INFO(Render_Vulkan, "VRAMTRACE buffer {} MiB (usage {:#x}, memory type {})",
+                 alloc_info.size >> 20, static_cast<u32>(ci.usage), alloc_info.memoryType);
+    }
     u8 *data = reinterpret_cast<u8 *>(alloc_info.pMappedData);
     std::span<u8> mapped_data{};
     if (data) {

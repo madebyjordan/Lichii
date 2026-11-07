@@ -177,4 +177,11 @@ namespace Vulkan {
     /// Logs VMA's blocks and allocations per memory type, and each heap's budget.
     void LogMemoryStatistics(const Device& device);
 
+/// LOCAL TEST ONLY: EDEN_NX2_VRAM_TRACE=1 device memory callbacks (null when off): one log line per
+/// second with what was allocated and freed, and the running total per memory type.
+const VmaDeviceMemoryCallbacks* VramTraceCallbacks();
+
+/// LOCAL TEST ONLY: true while more than 256 MiB was allocated in the current second.
+bool VramTraceBurst();
+
 } // namespace Vulkan
