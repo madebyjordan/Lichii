@@ -31,7 +31,8 @@ struct OcarinaActorMesh {
 class OcarinaLiveDlss {
 public:
     OcarinaLiveDlss(const Device& device, Scheduler& scheduler, DescriptorPool& pool,
-                    ComputePassDescriptorQueue& queue, MemoryAllocator& allocator);
+                    ComputePassDescriptorQueue& queue, MemoryAllocator& allocator,
+                    bool use_fsr4 = false);
     ~OcarinaLiveDlss();
 
     [[nodiscard]] bool EvaluationFailed() const;

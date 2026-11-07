@@ -175,8 +175,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, oot_anti_aliasing, tr("Ocarina of Time anti-aliasing:"),
            tr("The Legend of Zelda: Ocarina of Time only.\nGame: the game's own anti-aliasing "
               "network, which sharpens heavily.\nNo sharpening: the image as the game renders it, "
-              "without the network (faster; pairs well with a higher resolution).\nTakes effect "
-              "when the game starts."));
+              "without the network (faster; pairs well with a higher resolution).\nAMD FSR 4.1: "
+              "skips the network and replaces the game's upscale with AMD FSR 4.1 (needs AMD's "
+              "amd_fidelityfx_loader_vk.dll and amd_fidelityfx_upscaler_vk.dll next to the "
+              "emulator; NVIDIA DLSS takes precedence when it is on).\nTakes effect when the game "
+              "starts."));
     INSERT(Settings, post_shader_chain, QString(), QString());
     INSERT(Settings, post_shader_preset, QString(), QString());
     INSERT(Settings, post_shader_enabled, tr("Enable post-processing effects"),
@@ -572,6 +575,7 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                           {
                               PAIR(OotAntiAliasing, Game, tr("Game")),
                               PAIR(OotAntiAliasing, NoSharpening, tr("No sharpening")),
+                              PAIR(OotAntiAliasing, Fsr4, tr("AMD FSR 4.1 (experimental)")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::AspectRatio>::Index(),
                           {

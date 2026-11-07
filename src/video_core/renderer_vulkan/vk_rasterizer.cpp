@@ -2077,7 +2077,14 @@ void RasterizerVulkan::TracePendingCpuWrites(bool compute, std::span<const u64> 
 bool RasterizerVulkan::OcarinaDlssEnabled() const {
     constexpr u64 ocarina_program = 0x0400486024DEC000ULL;
     return program_id == ocarina_program && !oot_live_failed &&
-           Settings::values.nvidia_dlss.GetValue() && Streamline::IsDlssAvailable();
+           ((Settings::values.nvidia_dlss.GetValue() && Streamline::IsDlssAvailable()) ||
+            OcarinaUsesFsr4());
+}
+
+/// AMD FSR 4.1 in place of the game's upscale, unless NVIDIA DLSS is on and running.
+bool RasterizerVulkan::OcarinaUsesFsr4() const {
+    return Settings::values.oot_anti_aliasing.GetValue() == Settings::OotAntiAliasing::Fsr4 &&
+           !(Settings::values.nvidia_dlss.GetValue() && Streamline::IsDlssAvailable());
 }
 
 /// Capture the two camera matrices from a draw targeting the scene color and depth. Terrain and
@@ -2350,8 +2357,9 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
             return fail("no upscale target view");
         }
         if (!oot_live_dlss) {
-            oot_live_dlss = std::make_unique<OcarinaLiveDlss>(
-                device, scheduler, descriptor_pool, compute_pass_descriptor_queue, memory_allocator);
+            oot_live_dlss = std::make_unique<OcarinaLiveDlss>(device, scheduler, descriptor_pool,
+                                                              compute_pass_descriptor_queue,
+                                                              memory_allocator, OcarinaUsesFsr4());
         }
         const VkExtent2D target_extent{target.size.width, target.size.height};
         const VkExtent2D output_extent = upscale_4k ? VkExtent2D{3840, 2160} : target_extent;
@@ -2371,7 +2379,8 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
         oot_fallback_reason = nullptr;
         return true;
     } catch (const vk::Exception& error) {
-        LOG_WARNING(Render_Vulkan, "Ocarina DLSS unavailable: {}", error.what());
+        LOG_WARNING(Render_Vulkan, "Ocarina {} unavailable: {}",
+                    OcarinaUsesFsr4() ? "AMD FSR 4.1" : "DLSS", error.what());
         oot_live_failed = true;
         return false;
     }

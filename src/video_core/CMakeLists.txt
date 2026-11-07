@@ -553,13 +553,18 @@ if (ENABLE_NVIDIA_DLSS)
         set(STREAMLINE_INCLUDE_DIR "${streamline_SOURCE_DIR}/include")
     endif()
     target_sources(video_core PRIVATE
+        renderer_vulkan/vk_fsr4_upscaler.cpp
+        renderer_vulkan/vk_fsr4_upscaler.h
         renderer_vulkan/vk_streamline_dlss.cpp
         renderer_vulkan/vk_streamline_dlss.h
+        renderer_vulkan/vk_temporal_upscaler.h
         vulkan_common/streamline.cpp
         vulkan_common/streamline.h
         vulkan_common/streamline_api.h
     )
     target_include_directories(video_core PRIVATE "${STREAMLINE_INCLUDE_DIR}")
+    # AMD FSR 4.1 (Ocarina of Time): the FSR API's headers; AMD's DLLs load at run time.
+    target_include_directories(video_core SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/externals/ffx-api")
     target_link_libraries(video_core PRIVATE version wintrust crypt32)
     target_compile_definitions(video_core PUBLIC EGLANTINE_STREAMLINE)
     message(STATUS "NVIDIA DLSS through Streamline: ${STREAMLINE_INCLUDE_DIR}")

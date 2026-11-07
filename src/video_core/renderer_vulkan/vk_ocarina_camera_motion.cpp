@@ -12,6 +12,7 @@
 #include "video_core/host_shaders/ocarina_dlss_4k_composite_comp_spv.h"
 #include "video_core/host_shaders/ocarina_dlss_4k_reference_comp_spv.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
+#include "video_core/renderer_vulkan/vk_fsr4_upscaler.h"
 #include "video_core/renderer_vulkan/vk_streamline_dlss.h"
 
 #include "video_core/host_shaders/ocarina_camera_motion_comp_spv.h"
@@ -408,7 +409,7 @@ public:
                       code) {}
 
     void Record(Scheduler& scheduler, const void* descriptors, VkImage input,
-                VkExtent2D extent, const StreamlineDlssUpscaler* require_success = nullptr) {
+                VkExtent2D extent, const TemporalUpscaler* require_success = nullptr) {
         scheduler.Record([this, descriptors, input, extent, require_success](vk::CommandBuffer cmd) {
             if (require_success && require_success->Failed()) {
                 return;
@@ -432,7 +433,7 @@ public:
         });
     }
     void RecordOutput(Scheduler& scheduler, const void* descriptors,
-                      const StreamlineDlssUpscaler& upscaler, VkExtent2D extent, u64 frame,
+                      const TemporalUpscaler& upscaler, VkExtent2D extent, u64 frame,
                       bool reset) {
         scheduler.Record([this, descriptors, &upscaler, extent, frame, reset](vk::CommandBuffer cmd) {
             if (upscaler.Failed()) {
@@ -491,7 +492,7 @@ public:
                       OCARINA_DLSS_4K_COMPOSITE_COMP_SPV) {}
 
     void Record(Scheduler& scheduler, const void* descriptors, VkImage image,
-                const StreamlineDlssUpscaler& upscaler, u64 frame) {
+                const TemporalUpscaler& upscaler, u64 frame) {
         scheduler.Record([this, descriptors, image, &upscaler, frame](vk::CommandBuffer cmd) {
             const auto output = ProbeBarrier(image, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
                                              VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
@@ -579,9 +580,13 @@ struct OcarinaFrameSlot {
 
 struct OcarinaLiveDlss::Impl {
     Impl(const Device& device_, Scheduler& scheduler_, DescriptorPool& pool,
-         ComputePassDescriptorQueue& queue_, MemoryAllocator& allocator_)
+         ComputePassDescriptorQueue& queue_, MemoryAllocator& allocator_, bool use_fsr4)
         : device{device_}, scheduler{scheduler_}, queue{queue_}, allocator{allocator_}, pool{pool},
-          upscaler{device, scheduler, allocator}, motion_pass{device, scheduler, pool},
+          upscaler_owner{use_fsr4 ? std::unique_ptr<TemporalUpscaler>{std::make_unique<Fsr4Upscaler>(
+                                        device, scheduler, allocator)}
+                                  : std::make_unique<StreamlineDlssUpscaler>(device, scheduler,
+                                                                             allocator)},
+          upscaler{*upscaler_owner}, motion_pass{device, scheduler, pool},
           color_pass{device, scheduler, pool},
           output_pass{device, scheduler, pool, OCARINA_DLSS_OUTPUT_COMP_SPV} {}
 
@@ -590,7 +595,8 @@ struct OcarinaLiveDlss::Impl {
     ComputePassDescriptorQueue& queue;
     MemoryAllocator& allocator;
     DescriptorPool& pool;
-    StreamlineDlssUpscaler upscaler;
+    std::unique_ptr<TemporalUpscaler> upscaler_owner;
+    TemporalUpscaler& upscaler;
     CameraMotionPass motion_pass;
     OcarinaColorPass color_pass;
     OcarinaColorPass output_pass;
@@ -624,8 +630,9 @@ struct OcarinaLiveDlss::Impl {
 };
 
 OcarinaLiveDlss::OcarinaLiveDlss(const Device& device, Scheduler& scheduler, DescriptorPool& pool,
-                                 ComputePassDescriptorQueue& queue, MemoryAllocator& allocator)
-    : impl{std::make_unique<Impl>(device, scheduler, pool, queue, allocator)} {}
+                                 ComputePassDescriptorQueue& queue, MemoryAllocator& allocator,
+                                 bool use_fsr4)
+    : impl{std::make_unique<Impl>(device, scheduler, pool, queue, allocator, use_fsr4)} {}
 
 OcarinaLiveDlss::~OcarinaLiveDlss() = default;
 

@@ -12,7 +12,8 @@
 // single-frame tensor network on the tonemapped image and an output pass that sharpens the result
 // hard. With the "Ocarina of Time anti-aliasing" setting at No sharpening, the network is skipped
 // and its output pass is replaced by a copy of the tonemapped image
-// (docs/nx2/oot-network-bypass.md).
+// (docs/nx2/oot-network-bypass.md). AMD FSR 4.1 skips the network the same way and then replaces
+// the game's upscale (vk_ocarina_camera_motion.h).
 //
 // Shader hashes, native program keys and constant buffer offsets are those of the game's main
 // with build id E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348; a game update needs them re-checked.
@@ -44,10 +45,10 @@ struct BypassState {
     std::atomic<bool> output_replaced{};      ///< the latest output pass was replaced
 };
 
-/// Whether the running game is Ocarina of Time with its anti-aliasing at No sharpening.
+/// Whether the running game is Ocarina of Time with its anti-aliasing at No sharpening or AMD FSR.
 inline bool BypassEnabled(u64 program_id) {
     return program_id == ProgramId &&
-           Settings::values.oot_anti_aliasing.GetValue() == Settings::OotAntiAliasing::NoSharpening;
+           Settings::values.oot_anti_aliasing.GetValue() != Settings::OotAntiAliasing::Game;
 }
 
 } // namespace VideoCommon::OotNetwork

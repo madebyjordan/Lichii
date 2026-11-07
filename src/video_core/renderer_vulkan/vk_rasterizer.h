@@ -252,6 +252,7 @@ private:
     void TracePendingCpuWrites(bool compute, std::span<const u64> shader_hashes);
 #ifdef EGLANTINE_STREAMLINE
     bool OcarinaDlssEnabled() const;
+    bool OcarinaUsesFsr4() const;
     void TrackOcarinaCamera();
     void TrackOcarinaActor(u64 shader_hash, bool is_indexed, bool is_indirect);
     bool TryOcarinaDlss(const ComputePipeline& pipeline, bool replace);
