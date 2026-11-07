@@ -908,6 +908,21 @@ std::optional<Texture::TICEntry> KeplerCompute::ConstBuffer0Image(u32 offset) co
 
 bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key) {
     using namespace VideoCommon::OotNetwork;
+    if (Fsr4Enabled(program_id)) {
+        // The output pass stays for FSR to replace. FSR then reads the tonemap pass's image, so
+        // the network's first passes are skipped while that replacement succeeds; a failed
+        // replacement brings them back next frame.
+        auto* const bypass = rasterizer->OotNetworkBypass();
+        const bool skip = bypass &&
+                          (native_key == PrepassProgramKey || native_key == NetworkProgramKey) &&
+                          bypass->upscale_replaced.load(std::memory_order_relaxed);
+        static bool logged = false;
+        if (skip && !std::exchange(logged, true)) {
+            LOG_INFO(HW_GPU, "Ocarina of Time: anti-aliasing network skipped while AMD FSR 4.1 "
+                             "replaces its output pass");
+        }
+        return skip;
+    }
     if (!BypassEnabled(program_id)) {
         return false;
     }

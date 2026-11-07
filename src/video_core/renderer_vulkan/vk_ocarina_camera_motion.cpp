@@ -9,6 +9,7 @@
 #include "common/logging.h"
 #include "video_core/host_shaders/ocarina_dlss_color_comp_spv.h"
 #include "video_core/host_shaders/ocarina_dlss_output_comp_spv.h"
+#include "video_core/host_shaders/ocarina_fsr_tonemapped_color_comp_spv.h"
 #include "video_core/host_shaders/ocarina_dlss_4k_composite_comp_spv.h"
 #include "video_core/host_shaders/ocarina_dlss_4k_reference_comp_spv.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
@@ -588,6 +589,7 @@ struct OcarinaLiveDlss::Impl {
                                                                              allocator)},
           upscaler{*upscaler_owner}, motion_pass{device, scheduler, pool},
           color_pass{device, scheduler, pool},
+          tonemapped_color_pass{device, scheduler, pool, OCARINA_FSR_TONEMAPPED_COLOR_COMP_SPV},
           output_pass{device, scheduler, pool, OCARINA_DLSS_OUTPUT_COMP_SPV} {}
 
     const Device& device;
@@ -599,6 +601,7 @@ struct OcarinaLiveDlss::Impl {
     TemporalUpscaler& upscaler;
     CameraMotionPass motion_pass;
     OcarinaColorPass color_pass;
+    OcarinaColorPass tonemapped_color_pass;
     OcarinaColorPass output_pass;
     std::array<std::unique_ptr<OcarinaFrameSlot>, 4> slots;
     std::optional<u64> last_frame;
@@ -696,7 +699,8 @@ VkImageView OcarinaLiveDlss::CompositedView() const {
 bool OcarinaLiveDlss::Record(VkImageView color, VkImageView depth, VkImageView target, VkExtent2D extent,
                             VkExtent2D output_extent, VkExtent2D target_extent,
                             const Matrix& current, const Matrix& previous,
-                            const OcarinaActorMesh& mesh, VkImage depth_image, u64 frame) {
+                            const OcarinaActorMesh& mesh, VkImage depth_image, u64 frame,
+                            bool color_is_tonemapped) {
     auto& state = *impl;
     if (state.last_frame == frame || state.upscaler.Failed()) {
         return false;
@@ -741,7 +745,8 @@ bool OcarinaLiveDlss::Record(VkImageView color, VkImageView depth, VkImageView t
     state.queue.Acquire(state.scheduler, 2);
     state.queue.AddSampledImage(color, sampler);
     state.queue.AddImage(*resources.color_view);
-    state.color_pass.Record(state.scheduler, state.queue.UpdateData(), *resources.color, extent);
+    auto& input_pass = color_is_tonemapped ? state.tonemapped_color_pass : state.color_pass;
+    input_pass.Record(state.scheduler, state.queue.UpdateData(), *resources.color, extent);
 
     const bool reset = !state.last_frame || frame != *state.last_frame + 1 ||
                        !std::ranges::equal(previous, state.last_view_projection,

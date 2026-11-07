@@ -27,8 +27,11 @@ TEST_CASE("Ocarina of Time network bypass follows the setting and the game",
     CHECK(BypassEnabled(ProgramId));
     CHECK_FALSE(BypassEnabled(0x0400C3F00006E000ULL));
 
+    // FSR replaces the output pass itself, so the copy must not stand in for it.
     setting.SetValue(Settings::OotAntiAliasing::Fsr4);
-    CHECK(BypassEnabled(ProgramId));
+    CHECK_FALSE(BypassEnabled(ProgramId));
+    CHECK(Fsr4Enabled(ProgramId));
+    CHECK_FALSE(Fsr4Enabled(0x0400C3F00006E000ULL));
 
     setting.SetValue(previous);
 }

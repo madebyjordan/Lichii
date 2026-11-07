@@ -307,6 +307,9 @@ private:
     } oot_motion;
     std::unique_ptr<class OcarinaLiveDlss> oot_live_dlss;
     bool oot_live_failed{};
+    /// AMD FSR 4.1: render target 0 of this frame's tonemap draw, the network's input.
+    VideoCommon::ImageViewId oot_tonemapped_view{};
+    std::optional<u64> oot_tonemapped_frame;
     const char* oot_fallback_reason{};
     u32 oot_fallback_repeats{};
     std::optional<u64> oot_dlss_frame;
