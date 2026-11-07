@@ -6,10 +6,12 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <fmt/ranges.h>
 #include <array>
@@ -502,6 +504,32 @@ const ShaderInfo* ShaderCache::MakeShaderInfo(GenericEnvironment& env, VAddr cpu
     }
     info->lowered_native = env.LoweredNative();
     const size_t size_bytes{env.SourceSizeBytes() ? env.SourceSizeBytes() : info->size_bytes};
+    // LOCAL TEST ONLY: EDEN_NX2_SHADER_DUMP_DIR=<dir> writes each shader's hashed code once
+    // (<stage>_<hash>.bin) and logs when an address that held one shader holds another.
+    if (static const char* const dump_dir = std::getenv("EDEN_NX2_SHADER_DUMP_DIR"); dump_dir) {
+        static std::mutex dump_mutex;
+        static std::unordered_set<u64> dumped;
+        static std::unordered_map<VAddr, u64> hash_at;
+        std::scoped_lock lock{dump_mutex};
+        const u64 hash = info->unique_hash;
+        const auto stage = static_cast<u32>(env.ShaderStage());
+        if (const auto [it, inserted] = hash_at.try_emplace(cpu_addr, hash);
+            !inserted && it->second != hash) {
+            LOG_WARNING(HW_GPU, "SHADERDUMP addr {:#x} stage {}: {:016x} -> {:016x} ({} bytes)",
+                        cpu_addr, stage, it->second, hash, size_bytes);
+            it->second = hash;
+        }
+        if (dumped.insert(hash).second) {
+            const auto words = env.CodeWords();
+            const auto path = fmt::format("{}/{}_{:016x}.bin", dump_dir, stage, hash);
+            if (std::FILE* const file = std::fopen(path.c_str(), "wb")) {
+                std::fwrite(words.data(), sizeof(u64), words.size(), file);
+                std::fclose(file);
+            }
+            LOG_INFO(HW_GPU, "SHADERDUMP new {:016x} stage {} addr {:#x} {} bytes", hash, stage,
+                     cpu_addr, words.size() * sizeof(u64));
+        }
+    }
     const ShaderInfo* const result{info.get()};
     Register(std::move(info), cpu_addr, size_bytes);
     return result;

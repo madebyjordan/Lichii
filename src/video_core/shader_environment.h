@@ -90,6 +90,11 @@ public:
         return lowered_native;
     }
 
+    /// LOCAL TEST ONLY: the code the hash was computed over (EDEN_NX2_SHADER_DUMP_DIR).
+    [[nodiscard]] std::span<const u64> CodeWords() const noexcept {
+        return code;
+    }
+
     [[nodiscard]] bool CanBeSerialized() const noexcept;
 
     [[nodiscard]] u64 CalculateHash() const;
