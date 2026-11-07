@@ -6,7 +6,9 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <map>
@@ -148,6 +150,20 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     u64 images_deleted{};
     std::map<u64, std::pair<u32, GPUVAddr>> created_shapes;
     bool debug_stats{}; ///< Collect what only the debug statistics lines use
+    /// EDEN_NX2_TC_LOG: why images are created. tc_collected: addresses the collector freed (shape,
+    /// frame); tc_created: the shape last created at each address.
+    bool tc_log{std::getenv("EDEN_NX2_TC_LOG") != nullptr};
+    std::unordered_map<GPUVAddr, std::pair<u64, u64>> tc_collected;
+    std::unordered_map<GPUVAddr, u64> tc_created;
+    u64 tc_recreated_same{};        ///< Created where the collector freed the same shape
+    u64 tc_recreated_same_frames{}; ///< Frames between those frees and re-creations
+    u64 tc_recreated_other{};       ///< Created where the collector freed another shape
+    u64 tc_seen_same{};             ///< Same shape as last created there (not freed by the collector)
+    u64 tc_seen_other{};            ///< Another shape than last created there
+    u64 tc_new_address{};           ///< No image created at this address before
+    u64 tc_uploads_at_create{};     ///< Uploads in the frame the image was created
+    std::array<u64, 4> tc_collected_life{}; ///< Collected after living <=30, <=120, <=600, more frames
+    u64 tc_collected_gpu_written{}; ///< Collected images the GPU had written (render targets)
 
     static constexpr s64 DEFAULT_EXPECTED_MEMORY = 1_GiB + 125_MiB;
     static constexpr s64 DEFAULT_CRITICAL_MEMORY = 1_GiB + 625_MiB;
