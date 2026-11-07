@@ -1761,6 +1761,23 @@ void Device::RemoveUnsuitableExtensions() {
             properties.subgroup_size_control.maxSubgroupSize == GuestWarpSize;
         cooperative_hmma_16x16x16 =
             usable && has_shape(16) && IsGuestWarpSizeSupported(VK_SHADER_STAGE_COMPUTE_BIT);
+        // LOCAL TEST ONLY: list the shapes the driver reports, and EDEN_NX2_COOP_MATRIX=0 turns
+        // both HMMA paths off (AMD RDNA2 driver 2.0.353 crashed building them, amdvlk64+0x2f1c963).
+        for (const VkCooperativeMatrixPropertiesKHR& shape : shapes) {
+            LOG_INFO(Render_Vulkan,
+                     "Cooperative matrix shape: {}x{}x{} A {} B {} C {} result {} saturating {} "
+                     "scope {}",
+                     shape.MSize, shape.NSize, shape.KSize, static_cast<u32>(shape.AType),
+                     static_cast<u32>(shape.BType), static_cast<u32>(shape.CType),
+                     static_cast<u32>(shape.ResultType), shape.saturatingAccumulation,
+                     static_cast<u32>(shape.scope));
+        }
+        if (const char* const value = std::getenv("EDEN_NX2_COOP_MATRIX");
+            value != nullptr && value[0] == '0') {
+            LOG_INFO(Render_Vulkan, "EDEN_NX2_COOP_MATRIX=0: cooperative-matrix HMMA off");
+            cooperative_hmma_16x8x16 = false;
+            cooperative_hmma_16x16x16 = false;
+        }
         extensions.cooperative_matrix = cooperative_hmma_16x8x16 || cooperative_hmma_16x16x16;
         features.cooperative_matrix.cooperativeMatrixRobustBufferAccess = VK_FALSE;
         RemoveExtensionFeatureIfUnsuitable(extensions.cooperative_matrix,
