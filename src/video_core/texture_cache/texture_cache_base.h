@@ -579,7 +579,7 @@ private:
     /// Applies EDEN_NX2_TC_EXPECTED_MIB / EDEN_NX2_TC_CRITICAL_MIB and logs the thresholds.
     void ApplyThresholdOverrides(bool log = true);
 
-    /// EDEN_NX2_TC_SKIP_STALE=1: a GPU-written image dropped without being written back leaves its
+    /// A GPU-written image dropped without being written back leaves its
     /// guest memory stale (the GPU's data is gone). Its whole pages are marked here and kept
     /// tracked, so CPU writes, unmaps and write-backs clear them. An image made entirely on marked
     /// pages starts without an upload: the upload would only copy stale bytes the GPU overwrites.
@@ -590,7 +590,7 @@ private:
     void UpdateStaleTracking(u64 run_begin, u64 run_pages, s32 delta);
     bool tc_skip_stale{[] {
         const char* value = std::getenv("EDEN_NX2_TC_SKIP_STALE");
-        return value != nullptr && value[0] == '1';
+        return value == nullptr || value[0] != '0'; // EDEN_NX2_TC_SKIP_STALE=0: off
     }()};
     /// Device memory pages (Core::Memory::YUZU_PAGEBITS), not this cache's 1 MiB lookup pages.
     static constexpr u64 STALE_PAGE_BITS = 12;
