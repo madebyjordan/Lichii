@@ -1445,6 +1445,34 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         infos[stage_index] = &program.info;
 
         const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage, device)};
+        // LOCAL TEST ONLY (#408 AMD title screen): flag generics the vertex program loads whose
+        // keyed type is Disabled. "live" is the last unmasked register value (approximate for
+        // background builds).
+        if (index == 1 && key.state.dynamic_vertex_input) {
+            const u64 live_types{vertex_attribute_types};
+            u64 loads{};
+            for (size_t generic = 0; generic < Maxwell::NumVertexAttributes; ++generic) {
+                if (program.info.loads.Generic(generic)) {
+                    loads |= u64{1} << generic;
+                    if (runtime_info.generic_input_types[generic] ==
+                        Shader::AttributeType::Disabled) {
+                        LOG_WARNING(Render_Vulkan,
+                                    "ATTRKEY vs={:016x} fs={:016x} generic={} loaded but keyed "
+                                    "Disabled (key type {}, live type {})",
+                                    key.unique_hashes[1], key.unique_hashes[5], generic,
+                                    (key.state.attribute_types >> (generic * 2)) & 3,
+                                    (live_types >> (generic * 2)) & 3);
+                    }
+                }
+            }
+            if (key.unique_hashes[1] == 0x16aff33d999f993fULL) {
+                LOG_WARNING(Render_Vulkan,
+                            "ATTRKEY title vs={:016x} fs={:016x} loads={:#x} key_types={:#018x} "
+                            "live_types={:#018x}",
+                            key.unique_hashes[1], key.unique_hashes[5], loads,
+                            u64{key.state.attribute_types}, live_types);
+            }
+        }
         ConvertLegacyToGeneric(program, runtime_info);
         if (emit_pools) {
             deferred_runtime_infos[stage_index] = runtime_info;

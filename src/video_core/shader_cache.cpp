@@ -504,7 +504,12 @@ const ShaderInfo* ShaderCache::MakeShaderInfo(GenericEnvironment& env, VAddr cpu
         info->size_bytes = env.ReadSizeBytes();
     }
     info->lowered_native = env.LoweredNative();
-    if (info->lowered_native && env.ShaderStage() == Shader::Stage::VertexB) {
+    // LOCAL TEST ONLY: EDEN_NX2_ATTRKEY_VERTEXB=0 keeps every attribute type for VertexB.
+    static const bool mask_vertex_b = [] {
+        const char* const value = std::getenv("EDEN_NX2_ATTRKEY_VERTEXB");
+        return !(value && value[0] == '0');
+    }();
+    if (mask_vertex_b && info->lowered_native && env.ShaderStage() == Shader::Stage::VertexB) {
         // The hardware only fetches the attributes in the input map, so a read outside it is
         // never valid (none of Ocarina of Time's 1,250 cached vertex programs makes one).
         std::array<std::array<bool, 4>, Tegra::Engines::Maxwell3D::Regs::NumVertexAttributes>
