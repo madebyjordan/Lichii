@@ -40,3 +40,10 @@ These come from the `perf/run-profile.bat` frame trace, GPU profile and IPC coun
 - Conclusion: wait-site fixes move the waiting instead of removing it. The host GPU needs ~25–27 ms per frame, so this RX 6700 XT tops out around ~38 fps at best. More fps would need cheaper back-thread draw setup.
 - **Win: `EDEN_NX2_PREFLUSH=1` (#259).** Guest CPU reads of GPU-written memory fall from 68.6/s to 5.3/s. Each one cost a `Scheduler::Finish` (the whole GPU queue) on the back thread. fps went 26.6–27.3 → 29.9, frames over 100 ms −20%, and there was no flicker in Castle Town or Hyrule Field with #345 present. On by default in `run-dev.bat`. #259's own flicker (Kokiri grass and rocks flashing white or yellow) looks like the stale-report flashes #345 fixes. Kokiri isn't tested here yet.
 - The submit budget (`EDEN_NX2_FLUSH_DRAWS`, default 128 draws for native titles) is already right. At 4096: 26.4 fps, 1.8% of frames over 100 ms, GPU busy +6 ms. At 64: 28.8 fps, 1.35%. Only ~3 of ~43 submissions per frame come from it.
+- No flicker in Kokiri Forest village either with PREFLUSH + #345.
+- Sampling profile (`perf/sample_threads.py`, Kokiri Forest, 45 s):
+  - The back GPU thread is ~69% busy: ~16% of that is in `Scheduler::SubmitExecution` (driver submits), plus per-draw buffer-cache binding and syncing.
+  - The front GPU thread waits ~75% of the time.
+  - The game's busiest cores (4 and 5) run JIT code ~72% of the time.
+  - Nothing saturates: it's a latency-bound chain from the game to the front thread, the back thread and the GPU.
+- Render pass ends run ~2,600/s (~95/frame). `EDEN_NX2_DEFER_WFI` (MoltenVK's WaitForIdle deferral, tried on desktop) removed the 929/s WaitForIdle breaks, but clears and render target changes ended the passes soon after anyway: total −6%, no fps gain, no visual errors. Reverted. Most breaks follow the game's own render target changes.
