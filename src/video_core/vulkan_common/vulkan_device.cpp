@@ -436,9 +436,11 @@ u64 AllocatedUsage(VkDeviceSize driver_usage, const VmaBudget& vma_budget) {
     if (vendor_id != 0x1002) {
         return false;
     }
-    // GCN discrete, then Navi 1x and Navi 2x (RDNA1/RDNA2). RDNA3 starts at 0x7440 (Navi 31).
+    // GCN discrete, Navi 1x to Navi 23, then Navi 24 (0x7400-0x741F is CDNA2, which has matrix
+    // units). RDNA3 starts at 0x7440 (Navi 31).
     if ((device_id >= 0x6600 && device_id <= 0x6FFF) ||
-        (device_id >= 0x7310 && device_id <= 0x743F)) {
+        (device_id >= 0x7310 && device_id <= 0x73FF) ||
+        (device_id >= 0x7420 && device_id <= 0x743F)) {
         return true;
     }
     switch (device_id) {
