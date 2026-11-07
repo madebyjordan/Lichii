@@ -543,11 +543,6 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
     }
     submitted = true;
 #ifdef EGLANTINE_STREAMLINE
-    if (OcarinaDlssEnabled() && OcarinaUsesFsr4() &&
-        std::ranges::any_of(pipeline->ShaderHashes(), VideoCommon::OotNetwork::IsTonemapShader)) {
-        oot_tonemapped_view = texture_cache.GetRenderTargets().color_buffer_ids[0];
-        oot_tonemapped_frame = render_trace_frame;
-    }
     constexpr u64 final_vertex = 0x16aff33d999f993fULL;
     constexpr u64 final_fragment = 0x52402d8e8ab55263ULL;
     const auto hashes = pipeline->ShaderHashes();
@@ -2280,7 +2275,6 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
     }
     // Logs why the game's own upscale draws, when the reason changes and every 120th repeat.
     const auto fail = [this](const char* reason) {
-        oot_network_bypass.upscale_replaced.store(false, std::memory_order_relaxed);
         if (reason != oot_fallback_reason || ++oot_fallback_repeats % 120 == 0) {
             LOG_INFO(Render_Vulkan, "Ocarina DLSS: the game's upscale draws frame {} ({})",
                      render_trace_frame, reason);
@@ -2324,22 +2318,8 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
     if (sampled.size() != 1 || written.size() != 1 || !sampled[0].id || !written[0]) {
         return fail("unexpected upscale bindings");
     }
+    const auto& color = texture_cache.GetImageView(sampled[0].id);
     auto& target = texture_cache.GetImageView(written[0]);
-    // AMD FSR reads the tonemap pass's image, so the network that normally feeds this pass can be
-    // skipped (OotNetwork::BypassState::upscale_replaced). Without it, the network's output.
-    ImageView* tonemapped = nullptr;
-    if (OcarinaUsesFsr4() && oot_tonemapped_frame == render_trace_frame && oot_tonemapped_view) {
-        auto& view = texture_cache.GetImageView(oot_tonemapped_view);
-        if (view.format == VideoCore::Surface::PixelFormat::B10G11R11_FLOAT && view.BackingImage() &&
-            !view.IsRescaled() && view.Samples() == VK_SAMPLE_COUNT_1_BIT &&
-            view.range == VideoCommon::SubresourceRange{} &&
-            view.size.width == oot_motion.extent.width &&
-            view.size.height == oot_motion.extent.height &&
-            view.ImageHandle() != target.ImageHandle()) {
-            tonemapped = &view;
-        }
-    }
-    auto& color = tonemapped ? *tonemapped : texture_cache.GetImageView(sampled[0].id);
     using VideoCore::Surface::PixelFormat;
     const auto extent = oot_motion.extent;
     const bool valid_extents = upscale_4k
@@ -2351,8 +2331,7 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
         color.IsRescaled() || target.IsRescaled() ||
         color.Samples() != VK_SAMPLE_COUNT_1_BIT || target.Samples() != VK_SAMPLE_COUNT_1_BIT ||
         color.range != VideoCommon::SubresourceRange{} || target.range != VideoCommon::SubresourceRange{} ||
-        (!tonemapped && color.format != PixelFormat::E5B9G9R9_FLOAT) ||
-        target.format != PixelFormat::B10G11R11_FLOAT ||
+        color.format != PixelFormat::E5B9G9R9_FLOAT || target.format != PixelFormat::B10G11R11_FLOAT ||
         color.size.width != extent.width || color.size.height != extent.height ||
         color.ImageHandle() == target.ImageHandle() || depth.ImageHandle() == target.ImageHandle()) {
         return fail("unexpected upscale images");
@@ -2387,7 +2366,7 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
         const bool recorded = oot_live_dlss->Record(color_view, depth.DepthView(), target_view,
                                                    extent, output_extent, target_extent, oot_motion.current,
                                                    oot_motion.previous, mesh, depth.ImageHandle(),
-                                                   render_trace_frame, tonemapped != nullptr);
+                                                   render_trace_frame);
         if (!recorded) {
             return fail("DLSS declined the frame");
         }
@@ -2398,14 +2377,11 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
         }
         oot_dlss_frame = render_trace_frame;
         oot_fallback_reason = nullptr;
-        // The network is skipped only while nothing reads it: FSR fed the tonemapped image.
-        oot_network_bypass.upscale_replaced.store(tonemapped != nullptr, std::memory_order_relaxed);
         return true;
     } catch (const vk::Exception& error) {
         LOG_WARNING(Render_Vulkan, "Ocarina {} unavailable: {}",
                     OcarinaUsesFsr4() ? "AMD FSR 4.1" : "DLSS", error.what());
         oot_live_failed = true;
-        oot_network_bypass.upscale_replaced.store(false, std::memory_order_relaxed);
         return false;
     }
 }

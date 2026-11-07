@@ -38,7 +38,13 @@ and should remain private. No shaders are skipped or game files changed by this 
 
 The Legend of Zelda: Ocarina of Time (`0400486024DEC000`) has no DLSS of its own. Its
 end-of-frame upscale pass is replaced with NVIDIA DLSS when the setting is on and Streamline
-has DLSS for the device. FSR is not used for this game, and no environment override is needed.
+has DLSS for the device. FSR 3.1 is not used for this game, and no environment override is needed.
+With "Ocarina of Time anti-aliasing" at AMD FSR 4.1, the same pass is replaced with AMD FSR 4.1
+through AMD's signed `amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_upscaler_vk.dll` (FidelityFX
+SDK 2.4; only the API headers are in `externals/ffx-api`), fed the same inputs. NVIDIA DLSS takes
+precedence when it is on and available. The anti-aliasing network still runs: the upscale reads its
+output, and the game reads that output again later, so skipping the network corrupts the picture
+within a frame or two.
 
 - Max Resolution add-on off: the 3/4-scale pass (`e40f5efb5480e692`) is replaced and DLSS
   writes the game's output size (1080p to 1440p docked, 810p to 1080p handheld).

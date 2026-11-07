@@ -106,7 +106,6 @@ set(SHADER_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/ocarina_actor_motion.frag
     ${CMAKE_CURRENT_SOURCE_DIR}/ocarina_dlss_color.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/ocarina_dlss_output.comp
-    ${CMAKE_CURRENT_SOURCE_DIR}/ocarina_fsr_tonemapped_color.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/ocarina_dlss_4k_composite.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/ocarina_dlss_4k_reference.comp
 )
