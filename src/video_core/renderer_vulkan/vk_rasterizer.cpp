@@ -1847,7 +1847,14 @@ void RasterizerVulkan::WaitForIdle() {
 
     query_cache.NotifyWFI();
 
-    if (device.IsMoltenVK() && scheduler.IsRenderPassActive()) {
+    // LOCAL TEST ONLY: EDEN_NX2_DEFER_WFI=1 defers a wait for idle inside a render pass on every
+    // device, like FragmentBarrier: the next draw ends the pass only if it samples a bound
+    // render target or the pass wrote storage memory.
+    static const bool defer_wfi = [] {
+        const char* value = std::getenv("EDEN_NX2_DEFER_WFI");
+        return value != nullptr && value[0] == '1';
+    }();
+    if ((defer_wfi || device.IsMoltenVK()) && scheduler.IsRenderPassActive()) {
         scheduler.DeferFragmentBarrier();
         fence_manager.SignalOrdering();
         return;
