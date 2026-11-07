@@ -1451,11 +1451,36 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
             VideoCommon::DrainSite::MacroDmaFlush);
     }
     // Write out the reports held in the query cache, or the read returns stale occlusion counts.
-    split.Run(
-        [this, source, read_bytes] {
-            VideoCommon::QueryDma::FlushPending(memory_manager, *rasterizer, source, read_bytes);
-        },
-        VideoCommon::DrainSite::MacroDmaFlush);
+    // The back was just drained, so every report that can land in these words is issued: if the
+    // per-slot counts (#243) show them all completed, the words are final and the second round
+    // trip is skipped. Ocarina's macro 0xe2c reads report pages ~8,000 times a second, and almost
+    // none of them overlap a pending result. EDEN_NX2_REPORT_SLOTS=0 always flushes (A/B).
+    const bool reports_settled = [&] {
+        static const bool slots_on = [] {
+            const char* value = std::getenv("EDEN_NX2_REPORT_SLOTS");
+            return value == nullptr || value[0] != '0';
+        }();
+        if (!slots_on || words == 0) {
+            return false;
+        }
+        for (GPUVAddr begin = source; begin < source + read_bytes;) {
+            const GPUVAddr page_end = std::min<GPUVAddr>((begin & ~GPUVAddr{0xfff}) + 0x1000,
+                                                         source + read_bytes);
+            const auto device = memory_manager.GpuToCpuAddress(begin);
+            if (!device || !Tegra::Nx2AsyncReportsSettled(*device, page_end - begin)) {
+                return false;
+            }
+            begin = page_end;
+        }
+        return true;
+    }();
+    if (!reports_settled) {
+        split.Run(
+            [this, source, read_bytes] {
+                VideoCommon::QueryDma::FlushPending(memory_manager, *rasterizer, source, read_bytes);
+            },
+            VideoCommon::DrainSite::MacroDmaFlush);
+    }
     u32 changed{};
     for (u32 i = 0; i < words; ++i) {
         const u32 word = memory_manager.Read<u32>(source + u64{i} * sizeof(u32));
