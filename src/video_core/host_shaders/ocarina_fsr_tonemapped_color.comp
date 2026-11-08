@@ -14,7 +14,10 @@ void main() {
     // The tonemap pass writes the encoding the game's upscaler outputs (its encoded RGB squared);
     // take the square root to match the network's output, which the upscaler normally reads.
     // FSR is in LDR mode and keeps history: an invalid or out-of-range value would build up in it.
-    vec3 color = texelFetch(guest_color, pixel, 0).rgb;
+    // The last column and row repeat the ones before them: with the jitter shifted up or left,
+    // the AMD driver draws nothing there and they keep a stale value from earlier passes.
+    ivec2 source = min(pixel, max(imageSize(upscaler_color) - 2, ivec2(0)));
+    vec3 color = texelFetch(guest_color, source, 0).rgb;
     if (any(isnan(color)) || any(isinf(color))) {
         color = vec3(0.0);
     }

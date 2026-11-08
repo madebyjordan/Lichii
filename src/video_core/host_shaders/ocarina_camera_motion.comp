@@ -16,7 +16,9 @@ void main() {
     }
 
     vec2 size = vec2(extent);
-    float depth = texelFetch(scene_depth, pixel, 0).r;
+    // The last column and row may hold no geometry under a jitter shifted up or left (see
+    // ocarina_fsr_tonemapped_color.comp): take the depth before them.
+    float depth = texelFetch(scene_depth, min(pixel, max(extent - 2, ivec2(0))), 0).r;
     vec2 screen = (vec2(pixel) + 0.5) / size;
     // The captured Zelda path is unjittered, with [-1, 1] clip depth and negative viewport height.
     vec4 clip = vec4(screen * vec2(2, -2) + vec2(-1, 1), depth * 2 - 1, 1);

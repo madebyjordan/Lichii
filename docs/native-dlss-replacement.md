@@ -50,9 +50,10 @@ on and available. FSR 4.1 runs on RDNA2 too (its INT8 model).
   output again later; skipping it corrupts the picture within a frame or two.
 - The game draws without jitter, so draws that test or write the scene depth are offset by a
   sub-pixel amount through the viewport (Halton 2, 3 over 16 frames), and FSR is told the offset.
-  The offsets are kept in [0, 1), right and down: with an offset up or left, the AMD driver drew
-  nothing into the last column or row, and its stale contents became a flickering line on the
-  right and bottom edges.
+  With an offset up or left, the AMD driver draws nothing into the last column or row, and its
+  stale contents became a flickering line on the right and bottom edges, so FSR's colour and depth
+  inputs repeat the column and row before them. (Offsets kept in [0, 1) avoided it but gave FSR 4
+  horizontal seams every 128 rows in bright haze.)
   Full-screen passes and the HUD are not offset.
 - On an RX 6700 XT, 1080p to 1440p, FSR costs about 3 ms per frame over the game's own upscale.
 
