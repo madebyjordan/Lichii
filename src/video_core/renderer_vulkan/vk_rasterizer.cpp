@@ -2558,7 +2558,7 @@ std::array<f32, 2> RasterizerVulkan::OcarinaJitter() const {
         return {};
     }
     // 16 phases covers the 4/3 and 3/2 upscales (FSR suggests 8 per output pixel per input pixel).
-    const u32 index = static_cast<u32>(render_trace_frame % 16) + 1;
+    const u32 index = static_cast<u32>(oot_jitter_phase % 16) + 1;
     const f32 scale = GetOotFsrDebug().jitter_scale;
     return {(Halton(index, 2) - 0.5f) * scale, (Halton(index, 3) - 0.5f) * scale};
 }
@@ -2773,6 +2773,12 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
         }
         return false;
     }
+    // This is where the game's frame ends: the scene drawn so far used this jitter phase, and the
+    // next frame's draws take the next one. Presents can come while the next frame is being
+    // drawn, so counting by them gave one frame's draws two phases (found in #678).
+    SCOPE_EXIT {
+        ++oot_jitter_phase;
+    };
     // Logs why the game's own upscale draws, when the reason changes and every 120th repeat.
     const auto fail = [this](const char* reason) {
         if (reason != oot_fallback_reason || ++oot_fallback_repeats % 120 == 0) {
