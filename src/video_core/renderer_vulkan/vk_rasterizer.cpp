@@ -2468,7 +2468,8 @@ namespace {
 /// overrides them while the game runs (re-read every 30 frames): "jitter=0|1", "input=network|raw",
 /// "jscale=<x>" (jitter amount), "jsign=1|-1|0" (the jitter FSR is told), "jscope=all|write"
 /// (offset only draws that write depth), "jphase=pass|present" (when the jitter phase advances),
-/// "jbias=<x>" (added to both axes; -0.5 gives the old [-0.5, 0.5) shifts).
+/// "jbias=<x>" (added to both axes; -0.5 gives the old [-0.5, 0.5) shifts), "fsrbias=<x>" (added
+/// only to the jitter FSR is told).
 struct OotFsrDebug {
     bool jitter_off{};
     bool network_input{};
@@ -2477,15 +2478,16 @@ struct OotFsrDebug {
     bool write_only{};
     bool phase_by_present{};
     f32 jitter_bias{};
+    f32 fsr_bias{};
     bool operator==(const OotFsrDebug&) const = default;
 };
 void LogOotFsrDebug(const OotFsrDebug& debug, u64 frame) {
     LOG_INFO(Render_Vulkan,
              "Ocarina FSR diagnostics (frame {}): jitter {}, input {}, jscale {}, jsign {}, jscope {}, "
-             "jphase {}, jbias {}",
+             "jphase {}, jbias {}, fsrbias {}",
              frame, debug.jitter_off ? "off" : "on", debug.network_input ? "network" : "raw",
              debug.jitter_scale, debug.fsr_jitter_sign, debug.write_only ? "write" : "all",
-             debug.phase_by_present ? "present" : "pass", debug.jitter_bias);
+             debug.phase_by_present ? "present" : "pass", debug.jitter_bias, debug.fsr_bias);
 }
 OotFsrDebug& GetOotFsrDebug() {
     static OotFsrDebug debug = [] {
@@ -2534,6 +2536,8 @@ void PollOotFsrDebug(u64 frame) {
             next.phase_by_present = line.substr(7).starts_with("present");
         } else if (line.starts_with("jbias=")) {
             next.jitter_bias = number(line.substr(6), 0.0f);
+        } else if (line.starts_with("fsrbias=")) {
+            next.fsr_bias = number(line.substr(8), 0.0f);
         }
     }
     auto& debug = GetOotFsrDebug();
@@ -2581,7 +2585,8 @@ std::array<f32, 2> RasterizerVulkan::OcarinaJitter() const {
 std::array<f32, 2> RasterizerVulkan::OcarinaFsrJitter() const {
     const auto jitter = OcarinaJitter();
     const f32 sign = GetOotFsrDebug().fsr_jitter_sign;
-    return {jitter[0] * sign, jitter[1] * sign};
+    const f32 bias = GetOotFsrDebug().fsr_bias;
+    return {jitter[0] * sign + bias, jitter[1] * sign + bias};
 }
 
 bool RasterizerVulkan::OcarinaJitterDraw() const {
