@@ -13,6 +13,10 @@ void main() {
     }
     // The tonemap pass writes the encoding the game's upscaler outputs (its encoded RGB squared);
     // take the square root to match the network's output, which the upscaler normally reads.
-    vec3 color = max(texelFetch(guest_color, pixel, 0).rgb, vec3(0.0));
-    imageStore(upscaler_color, pixel, vec4(sqrt(color), 1.0));
+    // FSR is in LDR mode and keeps history: an invalid or out-of-range value would build up in it.
+    vec3 color = texelFetch(guest_color, pixel, 0).rgb;
+    if (any(isnan(color)) || any(isinf(color))) {
+        color = vec3(0.0);
+    }
+    imageStore(upscaler_color, pixel, vec4(sqrt(clamp(color, 0.0, 1.0)), 1.0));
 }
