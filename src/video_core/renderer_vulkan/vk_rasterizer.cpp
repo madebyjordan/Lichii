@@ -2468,7 +2468,7 @@ namespace {
 /// overrides them while the game runs (re-read every 30 frames): "jitter=0|1", "input=network|raw",
 /// "jscale=<x>" (jitter amount), "jsign=1|-1|0" (the jitter FSR is told), "jscope=all|write"
 /// (offset only draws that write depth), "jphase=pass|present" (when the jitter phase advances),
-/// "jbias=<x>" (added to both axes; 0.5 keeps every shift in [0, 1)).
+/// "jbias=<x>" (added to both axes; -0.5 gives the old [-0.5, 0.5) shifts).
 struct OotFsrDebug {
     bool jitter_off{};
     bool network_input{};
@@ -2570,7 +2570,11 @@ std::array<f32, 2> RasterizerVulkan::OcarinaJitter() const {
     const u64 phase = GetOotFsrDebug().phase_by_present ? render_trace_frame : oot_jitter_phase;
     const u32 index = static_cast<u32>(phase % 16) + 1;
     const f32 scale = GetOotFsrDebug().jitter_scale;
-    const f32 bias = GetOotFsrDebug().jitter_bias;
+    // Shifts stay in [0, 1), right and down. With a shift up or left, the AMD driver gives the
+    // last column or row no coverage at all: it kept a stale, near-white value from earlier passes,
+    // which FSR turned into a flickering green line on the right and bottom edges that built up in
+    // its history. FSR is told the same shift, so the half-pixel bias costs no alignment.
+    const f32 bias = 0.5f + GetOotFsrDebug().jitter_bias;
     return {(Halton(index, 2) - 0.5f) * scale + bias, (Halton(index, 3) - 0.5f) * scale + bias};
 }
 
