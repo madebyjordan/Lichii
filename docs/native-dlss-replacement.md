@@ -41,10 +41,23 @@ end-of-frame upscale pass is replaced with NVIDIA DLSS when the setting is on an
 has DLSS for the device. FSR 3.1 is not used for this game, and no environment override is needed.
 With "Ocarina of Time anti-aliasing" at AMD FSR 4.1, the same pass is replaced with AMD FSR 4.1
 through AMD's signed `amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_upscaler_vk.dll` (FidelityFX
-SDK 2.4; only the API headers are in `externals/ffx-api`), fed the same inputs. NVIDIA DLSS takes
-precedence when it is on and available. The anti-aliasing network still runs: the upscale reads its
-output, and the game reads that output again later, so skipping the network corrupts the picture
-within a frame or two.
+SDK 2.4; only the API headers are in `externals/ffx-api`). NVIDIA DLSS takes precedence when it is
+on and available. FSR 4.1 runs on RDNA2 too (its INT8 model).
+
+- FSR reads the tonemap pass's image (render target 0 of the draw with the tonemap fragment shader,
+  square-root encoded like the network's output), not the network's output: the network has
+  already smoothed away the detail FSR rebuilds. The network still runs, because the game reads its
+  output again later; skipping it corrupts the picture within a frame or two.
+- The game draws without jitter, so draws that test or write the scene depth are offset by a
+  sub-pixel amount through the viewport (Halton 2, 3 over 16 frames), and FSR is told the offset.
+  Full-screen passes and the HUD are not offset.
+- On an RX 6700 XT, 1080p to 1440p, FSR costs about 3 ms per frame over the game's own upscale.
+
+The game times its GPU work and, on emulated hardware, drops to a low quality mode within seconds:
+lower resolution, no anti-aliasing upscale (so nothing for DLSS or FSR to replace) and a fraction of
+its scene draws, with no speed gain here. For this game the Switch 2 GPU time within a frame runs
+64 times slower (`gpu_timestamp.h`), which keeps it at full quality. `EDEN_NX2_GPU_TIME_DIV=<n>`
+overrides the divisor for any game; 1 turns it off.
 
 - Max Resolution add-on off: the 3/4-scale pass (`e40f5efb5480e692`) is replaced and DLSS
   writes the game's output size (1080p to 1440p docked, 810p to 1080p handheld).

@@ -543,6 +543,11 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
     }
     submitted = true;
 #ifdef EGLANTINE_STREAMLINE
+    if (OcarinaDlssEnabled() && OcarinaUsesFsr4() &&
+        std::ranges::any_of(pipeline->ShaderHashes(), VideoCommon::OotNetwork::IsTonemapShader)) {
+        oot_tonemapped_view = texture_cache.GetRenderTargets().color_buffer_ids[0];
+        oot_tonemapped_frame = render_trace_frame;
+    }
     constexpr u64 final_vertex = 0x16aff33d999f993fULL;
     constexpr u64 final_fragment = 0x52402d8e8ab55263ULL;
     const auto hashes = pipeline->ShaderHashes();
@@ -2087,6 +2092,47 @@ bool RasterizerVulkan::OcarinaUsesFsr4() const {
            !(Settings::values.nvidia_dlss.GetValue() && Streamline::IsDlssAvailable());
 }
 
+namespace {
+/// Radical inverse of index in base, the Halton sequence FSR's own jitter helpers use.
+f32 Halton(u32 index, u32 base) {
+    f32 fraction = 1.0f;
+    f32 result = 0.0f;
+    while (index > 0) {
+        fraction /= static_cast<f32>(base);
+        result += fraction * static_cast<f32>(index % base);
+        index /= base;
+    }
+    return result;
+}
+} // Anonymous namespace
+
+std::array<f32, 2> RasterizerVulkan::OcarinaJitter() const {
+    if (!OcarinaUsesFsr4() || !oot_live_dlss || oot_live_failed ||
+        oot_live_dlss->EvaluationFailed()) {
+        return {};
+    }
+    // 16 phases covers the 4/3 and 3/2 upscales (FSR suggests 8 per output pixel per input pixel).
+    const u32 index = static_cast<u32>(render_trace_frame % 16) + 1;
+    return {Halton(index, 2) - 0.5f, Halton(index, 3) - 0.5f};
+}
+
+bool RasterizerVulkan::OcarinaJitterDraw() const {
+    // Geometry tests or writes the scene depth; full-screen passes and the HUD don't, and
+    // offsetting those would only resample their inputs.
+    const auto& regs = maxwell3d->regs;
+    if (!OcarinaDlssEnabled() || !OcarinaUsesFsr4() || oot_motion.extent.width == 0 ||
+        (!regs.depth_test_enable && !regs.depth_write_enabled)) {
+        return false;
+    }
+    const auto& targets = texture_cache.GetRenderTargets();
+    if (!targets.depth_buffer_id) {
+        return false;
+    }
+    const auto& depth = texture_cache.GetImageView(targets.depth_buffer_id);
+    return depth.size.width == oot_motion.extent.width &&
+           depth.size.height == oot_motion.extent.height;
+}
+
 /// Capture the two camera matrices from a draw targeting the scene color and depth. Terrain and
 /// materials draw with several vertex shaders, so any draw into a scene-sized target qualifies;
 /// the camera buffer's contents are checked below.
@@ -2318,8 +2364,23 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
     if (sampled.size() != 1 || written.size() != 1 || !sampled[0].id || !written[0]) {
         return fail("unexpected upscale bindings");
     }
-    const auto& color = texture_cache.GetImageView(sampled[0].id);
     auto& target = texture_cache.GetImageView(written[0]);
+    // AMD FSR reads the tonemap pass's image: the raw, jittered scene. The network's output it
+    // otherwise gets has already smoothed away the detail FSR rebuilds from. The network still
+    // runs; the game reads its output again later.
+    ImageView* tonemapped = nullptr;
+    if (OcarinaUsesFsr4() && oot_tonemapped_frame == render_trace_frame && oot_tonemapped_view) {
+        auto& view = texture_cache.GetImageView(oot_tonemapped_view);
+        if (view.format == VideoCore::Surface::PixelFormat::B10G11R11_FLOAT && view.BackingImage() &&
+            !view.IsRescaled() && view.Samples() == VK_SAMPLE_COUNT_1_BIT &&
+            view.range == VideoCommon::SubresourceRange{} &&
+            view.size.width == oot_motion.extent.width &&
+            view.size.height == oot_motion.extent.height &&
+            view.ImageHandle() != target.ImageHandle()) {
+            tonemapped = &view;
+        }
+    }
+    auto& color = tonemapped ? *tonemapped : texture_cache.GetImageView(sampled[0].id);
     using VideoCore::Surface::PixelFormat;
     const auto extent = oot_motion.extent;
     const bool valid_extents = upscale_4k
@@ -2331,7 +2392,8 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
         color.IsRescaled() || target.IsRescaled() ||
         color.Samples() != VK_SAMPLE_COUNT_1_BIT || target.Samples() != VK_SAMPLE_COUNT_1_BIT ||
         color.range != VideoCommon::SubresourceRange{} || target.range != VideoCommon::SubresourceRange{} ||
-        color.format != PixelFormat::E5B9G9R9_FLOAT || target.format != PixelFormat::B10G11R11_FLOAT ||
+        (!tonemapped && color.format != PixelFormat::E5B9G9R9_FLOAT) ||
+        target.format != PixelFormat::B10G11R11_FLOAT ||
         color.size.width != extent.width || color.size.height != extent.height ||
         color.ImageHandle() == target.ImageHandle() || depth.ImageHandle() == target.ImageHandle()) {
         return fail("unexpected upscale images");
@@ -2366,7 +2428,8 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
         const bool recorded = oot_live_dlss->Record(color_view, depth.DepthView(), target_view,
                                                    extent, output_extent, target_extent, oot_motion.current,
                                                    oot_motion.previous, mesh, depth.ImageHandle(),
-                                                   render_trace_frame);
+                                                   render_trace_frame, OcarinaJitter(),
+                                                   tonemapped != nullptr);
         if (!recorded) {
             return fail("DLSS declined the frame");
         }
@@ -2923,7 +2986,18 @@ void RasterizerVulkan::HandleTransformFeedback() {
 }
 
 void RasterizerVulkan::UpdateViewportsState(Tegra::Engines::Maxwell3D::Regs& regs) {
-    if (!state_tracker.TouchViewports()) {
+#ifdef EGLANTINE_STREAMLINE
+    // AMD FSR 4.1 in Ocarina of Time: the game draws without jitter, so the scene's geometry is
+    // offset by a sub-pixel amount each frame through the viewport, the offset FSR is told.
+    const std::array<f32, 2> jitter =
+        OcarinaJitterDraw() ? OcarinaJitter() : std::array<f32, 2>{};
+    const bool jitter_changed = jitter != oot_viewport_jitter;
+    oot_viewport_jitter = jitter;
+#else
+    constexpr std::array<f32, 2> jitter{};
+    constexpr bool jitter_changed = false;
+#endif
+    if (!state_tracker.TouchViewports() && !jitter_changed) {
         return;
     }
 
@@ -2939,8 +3013,8 @@ void RasterizerVulkan::UpdateViewportsState(Tegra::Engines::Maxwell3D::Regs& reg
             height = -height;
         }
         VkViewport viewport{
-            .x = x,
-            .y = y,
+            .x = x + jitter[0],
+            .y = y + jitter[1],
             .width = width,
             .height = height,
             .minDepth = 0.0f,
@@ -2957,7 +3031,7 @@ void RasterizerVulkan::UpdateViewportsState(Tegra::Engines::Maxwell3D::Regs& reg
     }
     const bool is_rescaling{texture_cache.IsRescaling()};
     const float scale = is_rescaling ? Settings::values.resolution_info.up_factor : 1.0f;
-    const std::array viewport_list{
+    std::array viewport_list{
         GetViewportState(device, regs, 0, scale),  GetViewportState(device, regs, 1, scale),
         GetViewportState(device, regs, 2, scale),  GetViewportState(device, regs, 3, scale),
         GetViewportState(device, regs, 4, scale),  GetViewportState(device, regs, 5, scale),
@@ -2967,6 +3041,10 @@ void RasterizerVulkan::UpdateViewportsState(Tegra::Engines::Maxwell3D::Regs& reg
         GetViewportState(device, regs, 12, scale), GetViewportState(device, regs, 13, scale),
         GetViewportState(device, regs, 14, scale), GetViewportState(device, regs, 15, scale),
     };
+    for (auto& viewport : viewport_list) {
+        viewport.x += jitter[0];
+        viewport.y += jitter[1];
+    }
     scheduler.Record([this, viewport_list](vk::CommandBuffer cmdbuf) {
         const u32 num_viewports = std::min<u32>(device.GetMaxViewports(), Maxwell::NumViewports);
         const vk::Span<VkViewport> viewports(viewport_list.data(), num_viewports);

@@ -253,6 +253,11 @@ private:
 #ifdef EGLANTINE_STREAMLINE
     bool OcarinaDlssEnabled() const;
     bool OcarinaUsesFsr4() const;
+    /// AMD FSR 4.1: the sub-pixel offset the scene is drawn with this frame (render pixels), or
+    /// zero while FSR isn't upscaling.
+    std::array<f32, 2> OcarinaJitter() const;
+    /// Whether the current draw renders the scene's geometry and takes the frame's jitter.
+    bool OcarinaJitterDraw() const;
     void TrackOcarinaCamera();
     void TrackOcarinaActor(u64 shader_hash, bool is_indexed, bool is_indirect);
     bool TryOcarinaDlss(const ComputePipeline& pipeline, bool replace);
@@ -307,6 +312,10 @@ private:
     } oot_motion;
     std::unique_ptr<class OcarinaLiveDlss> oot_live_dlss;
     bool oot_live_failed{};
+    std::array<f32, 2> oot_viewport_jitter{}; ///< the offset the bound viewports were set with
+    /// AMD FSR 4.1: render target 0 of this frame's tonemap draw, the network's input.
+    VideoCommon::ImageViewId oot_tonemapped_view{};
+    std::optional<u64> oot_tonemapped_frame;
     const char* oot_fallback_reason{};
     u32 oot_fallback_repeats{};
     std::optional<u64> oot_dlss_frame;
