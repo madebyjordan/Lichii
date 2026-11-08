@@ -2439,6 +2439,11 @@ std::array<f32, 2> RasterizerVulkan::OcarinaJitter() const {
         oot_live_dlss->EvaluationFailed()) {
         return {};
     }
+    // Only while FSR is replacing the upscale, last frame or this one. When the game lowers its
+    // quality it stops sending that pass, and its own upscale would show the jitter as shimmer.
+    if (!oot_dlss_frame || render_trace_frame - *oot_dlss_frame > 1) {
+        return {};
+    }
     // 16 phases covers the 4/3 and 3/2 upscales (FSR suggests 8 per output pixel per input pixel).
     const u32 index = static_cast<u32>(render_trace_frame % 16) + 1;
     return {Halton(index, 2) - 0.5f, Halton(index, 3) - 0.5f};
