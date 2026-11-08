@@ -7,11 +7,9 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
 #include <condition_variable>
 #include <list>
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "common/assert.h"
@@ -173,13 +171,10 @@ struct GPU::Impl {
 
     [[nodiscard]] u64 GetTicks() const {
         return ReadGpuTimestamp(system.CoreTiming(), g_nx2_ampere.load(std::memory_order_relaxed),
-                                Settings::values.gpu_clock.GetValue(),
-                                present_ns.load(std::memory_order_relaxed), GpuTimeDivisor());
+                                Settings::values.gpu_clock.GetValue());
     }
 
     void RendererFrameEndNotify() {
-        present_ns.store(static_cast<u64>(system.CoreTiming().GetGlobalTimeNs().count()),
-                         std::memory_order_relaxed);
         system.GetPerfStats().EndGameFrame();
     }
 
@@ -377,28 +372,6 @@ struct GPU::Impl {
 
     std::list<std::function<void()>> sync_requests;
     std::atomic<u64> current_sync_fence{};
-    std::atomic<u64> present_ns{}; ///< Host time of the last present, for GpuTimeDivisor
-    /// How much shorter GPU time within a frame looks to the game. The Legend of Zelda: Ocarina of
-    /// Time times its GPU work and, finding it far over budget on emulated hardware, drops to a
-    /// low quality mode within seconds: lower resolution, no anti-aliasing upscale and a fraction
-    /// of its scene draws, for no speed gain here. At 1/64 it keeps full quality.
-    /// EDEN_NX2_GPU_TIME_DIV=<n> sets the divisor for any game (1 turns it off).
-    static u64 GpuTimeDivisor() {
-        static const std::optional<u64> forced = []() -> std::optional<u64> {
-            const char* const value = std::getenv("EDEN_NX2_GPU_TIME_DIV");
-            if (value == nullptr) {
-                return std::nullopt;
-            }
-            const u64 parsed = std::strtoull(value, nullptr, 10);
-            LOG_INFO(HW_GPU, "EDEN_NX2_GPU_TIME_DIV: GPU time within a frame / {}", parsed);
-            return parsed != 0 ? parsed : 1;
-        }();
-        if (forced) {
-            return *forced;
-        }
-        constexpr u64 OcarinaOfTime = 0x0400486024DEC000ULL;
-        return Settings::GetCurrentProgramID() == OcarinaOfTime ? 64 : 1;
-    }
     u64 last_sync_fence{};
 
     VideoCommon::PendingMaps pending_maps;
