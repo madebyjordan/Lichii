@@ -70,3 +70,23 @@ TEST_CASE("Maxwell retains its tick units and clock scaling", "[video_core][gpu_
         REQUIRE(Tegra::ReadGpuTimestamp(timing, false, Settings::GpuClock::Overclock) == ticks / 512);
     }
 }
+
+TEST_CASE("Ampere GPU time within a frame can run slower", "[video_core][gpu_timestamp]") {
+    constexpr u64 PresentNs = 293'036'000'000'000;
+    constexpr u64 Divisor = 64;
+    for (const u64 elapsed : {u64{0}, u64{1}, u64{63}, u64{64}, u64{6'400'000}, u64{33'333'333}}) {
+        CAPTURE(elapsed);
+        const Timing timing{std::chrono::nanoseconds{PresentNs + elapsed}, 0};
+        REQUIRE(Tegra::ReadGpuTimestamp(timing, true, Settings::GpuClock::Normal, PresentNs,
+                                        Divisor) == PresentNs + elapsed / Divisor);
+        // A divisor of 1, or no present yet, leaves host time untouched.
+        REQUIRE(Tegra::ReadGpuTimestamp(timing, true, Settings::GpuClock::Normal, PresentNs, 1) ==
+                PresentNs + elapsed);
+    }
+    // Readings never go backwards across a present: the next frame starts at host time.
+    const Timing before{std::chrono::nanoseconds{PresentNs + 33'000'000}, 0};
+    const Timing after{std::chrono::nanoseconds{PresentNs + 33'000'001}, 0};
+    REQUIRE(Tegra::ReadGpuTimestamp(before, true, Settings::GpuClock::Normal, PresentNs, Divisor) <
+            Tegra::ReadGpuTimestamp(after, true, Settings::GpuClock::Normal, PresentNs + 33'000'001,
+                                    Divisor));
+}

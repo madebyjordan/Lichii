@@ -8,10 +8,18 @@
 
 namespace Tegra {
 
+/// present_ns and divisor (Ampere only): time since the last present (present_ns, the same clock)
+/// runs `divisor` times slower, so the GPU work a game times within a frame looks that much
+/// shorter. Timestamps stay monotonic and catch up with the host clock at every present.
 template <typename Timing>
-[[nodiscard]] u64 ReadGpuTimestamp(const Timing& timing, bool ampere, Settings::GpuClock clock) {
+[[nodiscard]] u64 ReadGpuTimestamp(const Timing& timing, bool ampere, Settings::GpuClock clock,
+                                   u64 present_ns = 0, u64 divisor = 1) {
     if (ampere) {
-        return static_cast<u64>(timing.GetGlobalTimeNs().count());
+        const u64 now = static_cast<u64>(timing.GetGlobalTimeNs().count());
+        if (divisor <= 1 || now <= present_ns) {
+            return now;
+        }
+        return present_ns + (now - present_ns) / divisor;
     }
     const u64 ticks = timing.GetGPUTicks();
     switch (clock) {
