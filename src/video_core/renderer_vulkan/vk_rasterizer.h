@@ -254,6 +254,7 @@ private:
     /// AMD FSR 4.1: the sub-pixel offset the scene is drawn with this frame (render pixels), or
     /// zero while FSR isn't upscaling.
     std::array<f32, 2> OcarinaJitter() const;
+    std::array<f32, 2> OcarinaFsrJitter() const;
     /// Whether the current draw renders the scene's geometry and takes the frame's jitter.
     bool OcarinaJitterDraw() const;
     void TrackOcarinaCamera();

@@ -2421,6 +2421,77 @@ bool RasterizerVulkan::OcarinaUsesFsr4() const {
 }
 
 namespace {
+/// Ocarina FSR diagnostics: EDEN_NX2_OOT_JITTER=0 turns the jitter off, and
+/// EDEN_NX2_OOT_FSR_INPUT=network feeds FSR the network's output. EDEN_NX2_OOT_FSR_CONTROL=<file>
+/// overrides them while the game runs (re-read every 30 frames): "jitter=0|1", "input=network|raw",
+/// "jscale=<x>" (jitter amount), "jsign=1|-1|0" (the jitter FSR is told), "jscope=all|write"
+/// (offset only draws that write depth).
+struct OotFsrDebug {
+    bool jitter_off{};
+    bool network_input{};
+    f32 jitter_scale{1.0f};
+    f32 fsr_jitter_sign{1.0f};
+    bool write_only{};
+    bool operator==(const OotFsrDebug&) const = default;
+};
+void LogOotFsrDebug(const OotFsrDebug& debug, u64 frame) {
+    LOG_INFO(Render_Vulkan,
+             "Ocarina FSR diagnostics (frame {}): jitter {}, input {}, jscale {}, jsign {}, jscope {}",
+             frame, debug.jitter_off ? "off" : "on", debug.network_input ? "network" : "raw",
+             debug.jitter_scale, debug.fsr_jitter_sign, debug.write_only ? "write" : "all");
+}
+OotFsrDebug& GetOotFsrDebug() {
+    static OotFsrDebug debug = [] {
+        OotFsrDebug result;
+        const char* const jitter = std::getenv("EDEN_NX2_OOT_JITTER");
+        result.jitter_off = jitter != nullptr && std::string_view{jitter} == "0";
+        const char* const input = std::getenv("EDEN_NX2_OOT_FSR_INPUT");
+        result.network_input = input != nullptr && std::string_view{input} == "network";
+        if (result.jitter_off || result.network_input) {
+            LogOotFsrDebug(result, 0);
+        }
+        return result;
+    }();
+    return debug;
+}
+void PollOotFsrDebug(u64 frame) {
+    static const char* const control = std::getenv("EDEN_NX2_OOT_FSR_CONTROL");
+    if (control == nullptr || frame % 30 != 0) {
+        return;
+    }
+    std::ifstream file(control);
+    std::string line;
+    OotFsrDebug next{};
+    const auto number = [](const std::string& text, f32 fallback) {
+        try {
+            return std::stof(text);
+        } catch (...) {
+            return fallback;
+        }
+    };
+    while (file && std::getline(file, line)) {
+        if (!line.empty() && line.back() == '') {
+            line.pop_back();
+        }
+        if (line.starts_with("jitter=")) {
+            next.jitter_off = line.substr(7).starts_with("0");
+        } else if (line.starts_with("input=")) {
+            next.network_input = line.substr(6).starts_with("network");
+        } else if (line.starts_with("jscale=")) {
+            next.jitter_scale = number(line.substr(7), 1.0f);
+        } else if (line.starts_with("jsign=")) {
+            next.fsr_jitter_sign = number(line.substr(6), 1.0f);
+        } else if (line.starts_with("jscope=")) {
+            next.write_only = line.substr(7).starts_with("write");
+        }
+    }
+    auto& debug = GetOotFsrDebug();
+    if (!(next == debug)) {
+        debug = next;
+        LogOotFsrDebug(debug, frame);
+    }
+}
+
 /// Radical inverse of index in base, the Halton sequence FSR's own jitter helpers use.
 f32 Halton(u32 index, u32 base) {
     f32 fraction = 1.0f;
@@ -2435,7 +2506,7 @@ f32 Halton(u32 index, u32 base) {
 } // Anonymous namespace
 
 std::array<f32, 2> RasterizerVulkan::OcarinaJitter() const {
-    if (!OcarinaUsesFsr4() || !oot_live_dlss || oot_live_failed ||
+    if (GetOotFsrDebug().jitter_off || !OcarinaUsesFsr4() || !oot_live_dlss || oot_live_failed ||
         oot_live_dlss->EvaluationFailed()) {
         return {};
     }
@@ -2446,7 +2517,14 @@ std::array<f32, 2> RasterizerVulkan::OcarinaJitter() const {
     }
     // 16 phases covers the 4/3 and 3/2 upscales (FSR suggests 8 per output pixel per input pixel).
     const u32 index = static_cast<u32>(render_trace_frame % 16) + 1;
-    return {Halton(index, 2) - 0.5f, Halton(index, 3) - 0.5f};
+    const f32 scale = GetOotFsrDebug().jitter_scale;
+    return {(Halton(index, 2) - 0.5f) * scale, (Halton(index, 3) - 0.5f) * scale};
+}
+
+std::array<f32, 2> RasterizerVulkan::OcarinaFsrJitter() const {
+    const auto jitter = OcarinaJitter();
+    const f32 sign = GetOotFsrDebug().fsr_jitter_sign;
+    return {jitter[0] * sign, jitter[1] * sign};
 }
 
 bool RasterizerVulkan::OcarinaJitterDraw() const {
@@ -2454,7 +2532,8 @@ bool RasterizerVulkan::OcarinaJitterDraw() const {
     // offsetting those would only resample their inputs.
     const auto& regs = maxwell3d->regs;
     if (!OcarinaDlssEnabled() || !OcarinaUsesFsr4() || oot_motion.extent.width == 0 ||
-        (!regs.depth_test_enable && !regs.depth_write_enabled)) {
+        (!regs.depth_test_enable && !regs.depth_write_enabled) ||
+        (GetOotFsrDebug().write_only && !regs.depth_write_enabled)) {
         return false;
     }
     const auto& targets = texture_cache.GetRenderTargets();
@@ -2702,7 +2781,9 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
     // otherwise gets has already smoothed away the detail FSR rebuilds from. The network still
     // runs; the game reads its output again later.
     ImageView* tonemapped = nullptr;
-    if (OcarinaUsesFsr4() && oot_tonemapped_frame == render_trace_frame && oot_tonemapped_view) {
+    if (OcarinaUsesFsr4() && !GetOotFsrDebug().network_input &&
+        oot_tonemapped_frame == render_trace_frame &&
+        oot_tonemapped_view) {
         auto& view = texture_cache.GetImageView(oot_tonemapped_view);
         if (view.format == VideoCore::Surface::PixelFormat::B10G11R11_FLOAT && view.BackingImage() &&
             !view.IsRescaled() && view.Samples() == VK_SAMPLE_COUNT_1_BIT &&
@@ -2761,7 +2842,7 @@ bool RasterizerVulkan::TryOcarinaDlss(const ComputePipeline& pipeline, bool repl
         const bool recorded = oot_live_dlss->Record(color_view, depth.DepthView(), target_view,
                                                    extent, output_extent, target_extent, oot_motion.current,
                                                    oot_motion.previous, mesh, depth.ImageHandle(),
-                                                   render_trace_frame, OcarinaJitter(),
+                                                   render_trace_frame, OcarinaFsrJitter(),
                                                    tonemapped != nullptr);
         if (!recorded) {
             return fail("DLSS declined the frame");
@@ -2858,6 +2939,9 @@ void RasterizerVulkan::TickFrame() {
     // Ocarina of Time stops sending the upscale pass DLSS and FSR replace when it lowers its own
     // quality, which it does within seconds when its GPU time looks over budget. Say so, since the
     // replacement otherwise just goes quiet.
+    if (program_id == 0x0400486024DEC000ULL) {
+        PollOotFsrDebug(render_trace_frame);
+    }
     if (OcarinaDlssEnabled() && oot_dlss_frame) {
         const bool stalled = render_trace_frame - *oot_dlss_frame >= 300;
         if (stalled != oot_upscale_stalled) {
