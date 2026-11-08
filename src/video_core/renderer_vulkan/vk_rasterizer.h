@@ -311,6 +311,7 @@ private:
     std::unique_ptr<class OcarinaLiveDlss> oot_live_dlss;
     bool oot_live_failed{};
     std::array<f32, 2> oot_viewport_jitter{}; ///< the offset the bound viewports were set with
+    bool oot_upscale_stalled{}; ///< no upscale pass to replace for a while (game quality lowered)
     /// AMD FSR 4.1: render target 0 of this frame's tonemap draw, the network's input.
     VideoCommon::ImageViewId oot_tonemapped_view{};
     std::optional<u64> oot_tonemapped_frame;

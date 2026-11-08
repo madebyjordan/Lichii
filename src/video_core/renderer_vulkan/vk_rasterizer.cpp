@@ -2849,6 +2849,27 @@ void RasterizerVulkan::TickFrame() {
         }
     }
     frame_dump.TickFrame();
+#ifdef EGLANTINE_STREAMLINE
+    // Ocarina of Time stops sending the upscale pass DLSS and FSR replace when it lowers its own
+    // quality, which it does within seconds when its GPU time looks over budget. Say so, since the
+    // replacement otherwise just goes quiet.
+    if (OcarinaDlssEnabled() && oot_dlss_frame) {
+        const bool stalled = render_trace_frame - *oot_dlss_frame >= 300;
+        if (stalled != oot_upscale_stalled) {
+            oot_upscale_stalled = stalled;
+            if (stalled) {
+                LOG_WARNING(Render_Vulkan,
+                            "Ocarina of Time: the game has sent no upscale pass for 300 frames, so "
+                            "{} is idle; it lowers its quality when its GPU time looks over budget "
+                            "(GPU Clocks Boost or Overclock keeps it at full quality)",
+                            OcarinaUsesFsr4() ? "AMD FSR 4.1" : "NVIDIA DLSS");
+            } else {
+                LOG_INFO(Render_Vulkan, "Ocarina of Time: {} is replacing the upscale pass again",
+                         OcarinaUsesFsr4() ? "AMD FSR 4.1" : "NVIDIA DLSS");
+            }
+        }
+    }
+#endif
     ++render_trace_frame;
     render_trace_draws = 0;
     render_trace_clears = 0;
